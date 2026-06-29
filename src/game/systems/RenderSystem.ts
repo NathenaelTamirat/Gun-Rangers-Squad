@@ -1,24 +1,28 @@
-import { GunData, BulletData, Particle } from '../types'
+import { GunData, BulletData, Particle, ArenaConfig } from '../types'
 import {
-  ARENA_WIDTH, ARENA_HEIGHT, WALL_THICKNESS,
-  GUN_HEIGHT, BULLET_RADIUS,
+  GUN_HEIGHT, BULLET_RADIUS, WALL_THICKNESS,
 } from '../constants'
 
 export class RenderSystem {
   private ctx: CanvasRenderingContext2D
-  private totalWidth: number
-  private totalHeight: number
+  private arena: ArenaConfig
 
-  constructor(ctx: CanvasRenderingContext2D) {
+  constructor(ctx: CanvasRenderingContext2D, arena: ArenaConfig) {
     this.ctx = ctx
-    this.totalWidth = ARENA_WIDTH + WALL_THICKNESS * 2
-    this.totalHeight = ARENA_HEIGHT + WALL_THICKNESS * 2
+    this.arena = arena
   }
+
+  setArena(arena: ArenaConfig): void {
+    this.arena = arena
+  }
+
+  private get tw(): number { return this.arena.width + WALL_THICKNESS * 2 }
+  private get th(): number { return this.arena.height + WALL_THICKNESS * 2 }
 
   clear(): void {
     this.ctx.setTransform(1, 0, 0, 1, 0, 0)
     this.ctx.fillStyle = '#000000'
-    this.ctx.fillRect(0, 0, this.totalWidth, this.totalHeight)
+    this.ctx.fillRect(0, 0, this.tw, this.th)
   }
 
   applyShake(intensity: number): void {
@@ -31,22 +35,20 @@ export class RenderSystem {
   drawSlomoVignette(timeScale: number): void {
     const ctx = this.ctx
     const alpha = Math.max(0, Math.min(1, (1 - timeScale) * 0.6))
-
     const gradient = ctx.createRadialGradient(
-      this.totalWidth / 2, this.totalHeight / 2, this.totalWidth * 0.2,
-      this.totalWidth / 2, this.totalHeight / 2, this.totalWidth * 0.7,
+      this.tw / 2, this.th / 2, this.tw * 0.2,
+      this.tw / 2, this.th / 2, this.tw * 0.7,
     )
-    gradient.addColorStop(0, `rgba(0, 0, 0, 0)`)
+    gradient.addColorStop(0, 'rgba(0, 0, 0, 0)')
     gradient.addColorStop(1, `rgba(0, 0, 0, ${alpha})`)
-
     ctx.fillStyle = gradient
-    ctx.fillRect(0, 0, this.totalWidth, this.totalHeight)
+    ctx.fillRect(0, 0, this.tw, this.th)
   }
 
   drawKoText(winnerLabel: string): void {
     const ctx = this.ctx
-    const cx = this.totalWidth / 2
-    const cy = this.totalHeight / 2 - 30
+    const cx = this.tw / 2
+    const cy = this.th / 2 - 30
 
     ctx.save()
     ctx.shadowColor = 'rgba(255, 200, 0, 0.5)'
@@ -66,19 +68,21 @@ export class RenderSystem {
 
   drawArena(): void {
     const ctx = this.ctx
+    const w = this.arena.width
+    const h = this.arena.height
 
     ctx.fillStyle = '#2a2a3e'
-    ctx.fillRect(0, 0, this.totalWidth, WALL_THICKNESS)
-    ctx.fillRect(0, ARENA_HEIGHT + WALL_THICKNESS, this.totalWidth, WALL_THICKNESS)
-    ctx.fillRect(0, 0, WALL_THICKNESS, this.totalHeight)
-    ctx.fillRect(ARENA_WIDTH + WALL_THICKNESS, 0, WALL_THICKNESS, this.totalHeight)
+    ctx.fillRect(0, 0, this.tw, WALL_THICKNESS)
+    ctx.fillRect(0, h + WALL_THICKNESS, this.tw, WALL_THICKNESS)
+    ctx.fillRect(0, 0, WALL_THICKNESS, this.th)
+    ctx.fillRect(w + WALL_THICKNESS, 0, WALL_THICKNESS, this.th)
 
     ctx.fillStyle = '#1a1a2e'
-    ctx.fillRect(WALL_THICKNESS, WALL_THICKNESS, ARENA_WIDTH, ARENA_HEIGHT)
+    ctx.fillRect(WALL_THICKNESS, WALL_THICKNESS, w, h)
 
     ctx.strokeStyle = '#555577'
     ctx.lineWidth = 2
-    ctx.strokeRect(WALL_THICKNESS, WALL_THICKNESS, ARENA_WIDTH, ARENA_HEIGHT)
+    ctx.strokeRect(WALL_THICKNESS, WALL_THICKNESS, w, h)
   }
 
   drawGun(gun: GunData): void {
@@ -120,7 +124,6 @@ export class RenderSystem {
 
   drawParticles(particles: Particle[]): void {
     const ctx = this.ctx
-
     for (const p of particles) {
       const alpha = p.alpha
       const size = p.type === 'smoke'
@@ -139,7 +142,6 @@ export class RenderSystem {
         ctx.fillRect(p.x - size / 2, p.y - size / 2, size, size)
       }
     }
-
     ctx.globalAlpha = 1
   }
 
@@ -154,10 +156,8 @@ export class RenderSystem {
 
     ctx.fillStyle = '#333333'
     ctx.fillRect(x - width / 2, y, width, height)
-
     ctx.fillStyle = healthPercent > 0.3 ? '#44cc44' : '#ff4444'
     ctx.fillRect(x - width / 2, y, width * healthPercent, height)
-
     ctx.strokeStyle = '#555555'
     ctx.lineWidth = 1
     ctx.strokeRect(x - width / 2, y, width, height)

@@ -1,14 +1,19 @@
 import Matter from 'matter-js'
-import { GameState, GunData, BulletData, Particle, GameCallbacks, GunSelections } from './types'
 import {
-  ARENA_WIDTH, ARENA_HEIGHT, WALL_THICKNESS,
-  MAX_BULLETS, MAX_PARTICLES, GUN_MODELS,
+  GameState, GunData, BulletData, Particle, GameCallbacks,
+  GunSelections, ArenaConfig, PhysicsSettings, BattleStats,
+} from './types'
+import {
+  WALL_THICKNESS, MAX_BULLETS, MAX_PARTICLES, GUN_MODELS,
   COLORS, SLOMO_DURATION, SLOMO_TARGET, SLOMO_FADE_IN,
+  GUN_RESTITUTION, GUN_FRICTION,
 } from './constants'
+import { ARENAS, DEFAULT_SETTINGS } from './arenas'
 import { RandomSystem } from './systems/RandomSystem'
 import { SpawnSystem } from './systems/SpawnSystem'
 import { AudioSystem } from './systems/AudioSystem'
 import { RenderSystem } from './systems/RenderSystem'
+import { StatsSystem } from './systems/StatsSystem'
 import { shoot } from './physics/shooting'
 import { applyRecoil } from './physics/recoil'
 import {
@@ -35,20 +40,21 @@ export class Game {
   private spawnSystem: SpawnSystem
   private audioSystem: AudioSystem
   private renderSystem: RenderSystem
+  private statsSystem: StatsSystem
   private bodiesToRemove: Matter.Body[] = []
   private hitFlashTimers: Map<string, number> = new Map()
   private shakeIntensity: number = 0
   private timeScale: number = 1
   private slomoStartTime: number = 0
   private selections: GunSelections = { gunA: 'pistol', gunB: 'pistol' }
+  private arena: ArenaConfig = ARENAS.standard
+  private settings: PhysicsSettings = { ...DEFAULT_SETTINGS }
+  private winnerId: string = ''
 
   constructor(canvas: HTMLCanvasElement, callbacks: GameCallbacks) {
     this.canvas = canvas
     this.ctx = canvas.getContext('2d')!
     this.callbacks = callbacks
-
-    canvas.width = ARENA_WIDTH + WALL_THICKNESS * 2
-    canvas.height = ARENA_HEIGHT + WALL_THICKNESS * 2
 
     this.engine = Matter.Engine.create({
       gravity: { x: 0, y: 0 },
@@ -59,8 +65,10 @@ export class Game {
     this.randomSystem = new RandomSystem()
     this.spawnSystem = new SpawnSystem()
     this.audioSystem = new AudioSystem()
-    this.renderSystem = new RenderSystem(this.ctx)
+    this.renderSystem = new RenderSystem(this.ctx, this.arena)
+    this.statsSystem = new StatsSystem()
 
+    this.resizeCanvas()
     this.createWalls()
     this.setupCollisions()
 
@@ -68,39 +76,30 @@ export class Game {
     this.gameLoop(this.lastTimestamp)
   }
 
+  private resizeCanvas(): void {
+    this.canvas.width = this.arena.width + WALL_THICKNESS * 2
+    this.canvas.height = this.arena.height + WALL_THICKNESS * 2
+  }
+
   private createWalls(): void {
-    const wallOpts: Matter.IBodyDefinition = {
+    const existing = Matter.Composite.allBodies(this.world).filter(b => b.isStatic)
+    for (const w of existing) Matter.Composite.remove(this.world, w)
+
+    const w = this.arena.width
+    const h = this.arena.height
+    const opts: Matter.IBodyDefinition = {
       isStatic: true,
-      restitution: 0.5,
-      friction: 0.8,
+      restitution: GUN_RESTITUTION * this.settings.restitutionMultiplier,
+      friction: GUN_FRICTION,
       label: 'wall',
-      collisionFilter: {
-        category: 0x0001,
-        mask: 0x0002 | 0x0004,
-      },
+      collisionFilter: { category: 0x0001, mask: 0x0002 | 0x0004 },
     }
 
     const walls = [
-      Matter.Bodies.rectangle(
-        WALL_THICKNESS + ARENA_WIDTH / 2, WALL_THICKNESS / 2 - 10,
-        ARENA_WIDTH + WALL_THICKNESS * 2, WALL_THICKNESS + 20,
-        wallOpts,
-      ),
-      Matter.Bodies.rectangle(
-        WALL_THICKNESS + ARENA_WIDTH / 2, WALL_THICKNESS + ARENA_HEIGHT + WALL_THICKNESS / 2 + 10,
-        ARENA_WIDTH + WALL_THICKNESS * 2, WALL_THICKNESS + 20,
-        wallOpts,
-      ),
-      Matter.Bodies.rectangle(
-        WALL_THICKNESS / 2 - 10, WALL_THICKNESS + ARENA_HEIGHT / 2,
-        WALL_THICKNESS + 20, ARENA_HEIGHT,
-        wallOpts,
-      ),
-      Matter.Bodies.rectangle(
-        WALL_THICKNESS + ARENA_WIDTH + WALL_THICKNESS / 2 + 10, WALL_THICKNESS + ARENA_HEIGHT / 2,
-        WALL_THICKNESS + 20, ARENA_HEIGHT,
-        wallOpts,
-      ),
+      Matter.Bodies.rectangle(WALL_THICKNESS + w / 2, WALL_THICKNESS / 2 - 10, w + WALL_THICKNESS * 2, WALL_THICKNESS + 20, opts),
+      Matter.Bodies.rectangle(WALL_THICKNESS + w / 2, WALL_THICKNESS + h + WALL_THICKNESS / 2 + 10, w + WALL_THICKNESS * 2, WALL_THICKNESS + 20, opts),
+      Matter.Bodies.rectangle(WALL_THICKNESS / 2 - 10, WALL_THICKNESS + h / 2, WALL_THICKNESS + 20, h, opts),
+      Matter.Bodies.rectangle(WALL_THICKNESS + w + WALL_THICKNESS / 2 + 10, WALL_THICKNESS + h / 2, WALL_THICKNESS + 20, h, opts),
     ]
 
     Matter.Composite.add(this.world, walls)
@@ -136,7 +135,6 @@ export class Game {
   private handleBulletHitGun(bulletBody: Matter.Body, gunBody: Matter.Body): void {
     const bulletOwner = getBodyOwnerId(bulletBody)
     const gunId = getGunIdFromBody(gunBody)
-
     if (bulletOwner === gunId) return
 
     const bulletIdx = this.bullets.findIndex(b => b.body === bulletBody)
@@ -156,6 +154,8 @@ export class Game {
     this.hitFlashTimers.set(gunId, 8)
     this.shakeIntensity = 6
 
+    this.statsSystem.recordHit(bulletOwner, bullet.damage)
+
     const hpA = this.guns.get('A')?.health ?? 0
     const hpB = this.guns.get('B')?.health ?? 0
     this.callbacks.onHealthChange(hpA, hpB)
@@ -164,6 +164,7 @@ export class Game {
     this.bullets.splice(bulletIdx, 1)
 
     if (targetGun.health <= 0) {
+      this.winnerId = attackerGun.id
       this.state = 'SLOMO'
       this.slomoStartTime = performance.now()
       this.timeScale = 1
@@ -179,21 +180,40 @@ export class Game {
     const { x, y } = bulletBody.position
     this.spawnDust(x, y)
     this.audioSystem.playWallHit()
+    this.statsSystem.recordWallBounce()
 
     this.bodiesToRemove.push(bulletBody)
     this.bullets.splice(idx, 1)
   }
 
-  startBattle(selections?: GunSelections): void {
-    if (selections) this.selections = selections
+  startBattle(config: {
+    selections?: GunSelections
+    arena?: string
+    settings?: PhysicsSettings
+    predictedWinner?: string | null
+  }): void {
+    if (config.selections) this.selections = config.selections
+    if (config.arena && ARENAS[config.arena]) {
+      this.arena = ARENAS[config.arena]
+      this.renderSystem.setArena(this.arena)
+      this.resizeCanvas()
+    }
+    if (config.settings) {
+      this.settings = config.settings
+      this.applySettings()
+    }
+
     this.cleanup()
+    this.createWalls()
+    this.statsSystem.reset()
+
     this.state = 'SPAWN'
     this.callbacks.onStateChange('SPAWN')
 
     const modelA = GUN_MODELS[this.selections.gunA] ?? GUN_MODELS.pistol
     const modelB = GUN_MODELS[this.selections.gunB] ?? GUN_MODELS.pistol
 
-    const { gunA, gunB } = this.spawnSystem.spawnGuns(this.world, modelA, modelB, this.callbacks)
+    const { gunA, gunB } = this.spawnSystem.spawnGuns(this.world, modelA, modelB, this.arena, this.callbacks)
     this.guns.set('A', gunA)
     this.guns.set('B', gunB)
 
@@ -204,11 +224,21 @@ export class Game {
     this.callbacks.onStateChange('BATTLE')
   }
 
+  private applySettings(): void {
+    const s = this.settings
+    this.engine.gravity.x = s.gravityX
+    this.engine.gravity.y = s.gravityY
+  }
+
   private fireGun(gunId: string): void {
     const gun = this.guns.get(gunId)
     if (!gun || gun.health <= 0) return
 
-    const bulletDataList = shoot(gun.body, gunId, this.world, gun.model)
+    const model = gun.model
+    const speedMul = this.settings.bulletSpeedMultiplier
+    const adjustedModel = { ...model, bulletSpeed: model.bulletSpeed * speedMul, recoilForce: model.recoilForce * this.settings.recoilMultiplier }
+
+    const bulletDataList = shoot(gun.body, gunId, this.world, adjustedModel)
     if (!bulletDataList.length) return
 
     for (const bulletData of bulletDataList) {
@@ -219,9 +249,10 @@ export class Game {
       this.bullets.push(bulletData)
     }
 
-    applyRecoil(gun.body, gun.model.length, gun.model.recoilForce)
+    applyRecoil(gun.body, model.length, adjustedModel.recoilForce)
+    this.statsSystem.recordShot(gunId)
 
-    const tip = getBarrelTip(gun.body, gun.model.length)
+    const tip = getBarrelTip(gun.body, model.length)
     this.spawnMuzzleFlash(tip.x, tip.y)
     this.spawnSmoke(tip.x, tip.y, 2)
     this.audioSystem.playShoot()
@@ -239,7 +270,6 @@ export class Game {
     } else if (this.state === 'SLOMO') {
       const elapsed = timestamp - this.slomoStartTime
       this.timeScale = this.computeSlomoScale(elapsed)
-
       Matter.Engine.update(this.engine, rawDelta * this.timeScale)
       this.processRemovals()
 
@@ -248,6 +278,25 @@ export class Game {
         this.timeScale = 1
         this.audioSystem.playVictory()
         this.callbacks.onStateChange('VICTORY')
+
+        const stats = this.statsSystem.getStats(this.winnerId)
+        this.callbacks.onStatsUpdate?.(stats)
+
+        const predicted = (window as any).__betPrediction
+        if (predicted) {
+          const correct = predicted === this.winnerId
+          const key = 'recoil_duel_bet'
+          const data = JSON.parse(localStorage.getItem(key) || '{"streak":0,"total":0}')
+          if (correct) {
+            data.streak++
+            data.total++
+          } else {
+            data.streak = 0
+          }
+          localStorage.setItem(key, JSON.stringify(data))
+          this.callbacks.onBetResult?.(correct, data.streak)
+          ;(window as any).__betPrediction = null
+        }
       }
     }
 
@@ -289,8 +338,8 @@ export class Game {
     this.renderSystem.drawParticles(this.particles)
 
     if (this.state === 'SLOMO') {
-      const winner = this.guns.get(this.getWinnerId())?.label ?? 'Unknown'
-      this.renderSystem.drawKoText(winner)
+      const label = this.guns.get(this.winnerId)?.label ?? 'Unknown'
+      this.renderSystem.drawKoText(label)
     }
 
     this.rafId = requestAnimationFrame(this.gameLoop)
@@ -298,21 +347,13 @@ export class Game {
 
   private computeSlomoScale(elapsed: number): number {
     if (elapsed < SLOMO_FADE_IN) {
-      const t = elapsed / SLOMO_FADE_IN
-      return 1 - (1 - SLOMO_TARGET) * t
+      return 1 - (1 - SLOMO_TARGET) * (elapsed / SLOMO_FADE_IN)
     }
     if (elapsed < SLOMO_DURATION - SLOMO_FADE_IN) {
       return SLOMO_TARGET
     }
     const t = (elapsed - (SLOMO_DURATION - SLOMO_FADE_IN)) / SLOMO_FADE_IN
     return SLOMO_TARGET + (1 - SLOMO_TARGET) * t
-  }
-
-  private getWinnerId(): string {
-    for (const [id, gun] of this.guns) {
-      if (gun.health > 0) return id
-    }
-    return this.guns.keys().next().value ?? 'A'
   }
 
   private processRemovals(): void {
@@ -324,7 +365,7 @@ export class Game {
 
   private cleanupBullets(): void {
     for (let i = this.bullets.length - 1; i >= 0; i--) {
-      if (isBulletOutOfBounds(this.bullets[i].body)) {
+      if (isBulletOutOfBounds(this.bullets[i].body, this.arena)) {
         this.bodiesToRemove.push(this.bullets[i].body)
         this.bullets.splice(i, 1)
       }
@@ -338,14 +379,10 @@ export class Game {
       for (const [id, gun] of this.guns) {
         if (gun.health > 0) aliveGuns.push(id)
       }
-
-      if (aliveGuns.length <= 1) {
-        return
-      }
+      if (aliveGuns.length <= 1) return
 
       const shooter = this.randomSystem.pickShooter(aliveGuns)
       this.fireGun(shooter)
-
       const gun = this.guns.get(shooter)
       if (gun) {
         this.nextFireTimer = this.randomSystem.nextFireDelay(
@@ -364,12 +401,8 @@ export class Game {
       p.y += p.vy * speed
       p.life--
       p.alpha = p.life / p.maxLife
-
-      if (p.life <= 0) {
-        this.particles.splice(i, 1)
-      }
+      if (p.life <= 0) this.particles.splice(i, 1)
     }
-
     if (this.particles.length > MAX_PARTICLES) {
       this.particles.splice(0, this.particles.length - MAX_PARTICLES)
     }
@@ -384,42 +417,22 @@ export class Game {
   private updateHitFlashes(): void {
     for (const [id, timer] of this.hitFlashTimers) {
       const newVal = timer - 1
-      if (newVal <= 0) {
-        this.hitFlashTimers.delete(id)
-      } else {
-        this.hitFlashTimers.set(id, newVal)
-      }
+      if (newVal <= 0) this.hitFlashTimers.delete(id)
+      else this.hitFlashTimers.set(id, newVal)
     }
   }
 
   private spawnMuzzleFlash(x: number, y: number): void {
     for (let i = 0; i < 5; i++) {
       if (this.particles.length >= MAX_PARTICLES) break
-      this.particles.push({
-        x, y,
-        vx: 0, vy: 0,
-        life: 4, maxLife: 4,
-        color: COLORS.MUZZLE_FLASH,
-        size: 6 + Math.random() * 4,
-        alpha: 1,
-        type: 'muzzle',
-      })
+      this.particles.push({ x, y, vx: 0, vy: 0, life: 4, maxLife: 4, color: COLORS.MUZZLE_FLASH, size: 6 + Math.random() * 4, alpha: 1, type: 'muzzle' })
     }
   }
 
   private spawnSmoke(x: number, y: number, count: number): void {
     for (let i = 0; i < count; i++) {
       if (this.particles.length >= MAX_PARTICLES) break
-      this.particles.push({
-        x, y,
-        vx: (Math.random() - 0.5) * 0.5,
-        vy: -Math.random() * 0.5 - 0.2,
-        life: 30, maxLife: 30,
-        color: COLORS.SMOKE,
-        size: 3 + Math.random() * 3,
-        alpha: 0.6,
-        type: 'smoke',
-      })
+      this.particles.push({ x, y, vx: (Math.random() - 0.5) * 0.5, vy: -Math.random() * 0.5 - 0.2, life: 30, maxLife: 30, color: COLORS.SMOKE, size: 3 + Math.random() * 3, alpha: 0.6, type: 'smoke' })
     }
   }
 
@@ -428,32 +441,14 @@ export class Game {
       if (this.particles.length >= MAX_PARTICLES) break
       const angle = randRange(0, Math.PI * 2)
       const speed = randRange(2, 6)
-      this.particles.push({
-        x, y,
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed,
-        life: 20, maxLife: 20,
-        color: COLORS.SPARK,
-        size: randRange(2, 4),
-        alpha: 1,
-        type: 'spark',
-      })
+      this.particles.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, life: 20, maxLife: 20, color: COLORS.SPARK, size: randRange(2, 4), alpha: 1, type: 'spark' })
     }
   }
 
   private spawnDust(x: number, y: number): void {
     for (let i = 0; i < 4; i++) {
       if (this.particles.length >= MAX_PARTICLES) break
-      this.particles.push({
-        x, y,
-        vx: (Math.random() - 0.5) * 2,
-        vy: (Math.random() - 0.5) * 2,
-        life: 15, maxLife: 15,
-        color: COLORS.DUST,
-        size: 2 + Math.random() * 2,
-        alpha: 0.5,
-        type: 'dust',
-      })
+      this.particles.push({ x, y, vx: (Math.random() - 0.5) * 2, vy: (Math.random() - 0.5) * 2, life: 15, maxLife: 15, color: COLORS.DUST, size: 2 + Math.random() * 2, alpha: 0.5, type: 'dust' })
     }
   }
 
@@ -466,20 +461,16 @@ export class Game {
   }
 
   private cleanup(): void {
-    for (const bullet of this.bullets) {
-      Matter.Composite.remove(this.world, bullet.body)
-    }
+    for (const bullet of this.bullets) Matter.Composite.remove(this.world, bullet.body)
     this.bullets = []
-
-    for (const gun of this.guns.values()) {
-      Matter.Composite.remove(this.world, gun.body)
-    }
+    for (const gun of this.guns.values()) Matter.Composite.remove(this.world, gun.body)
     this.guns.clear()
     this.particles = []
     this.bodiesToRemove = []
     this.hitFlashTimers.clear()
     this.shakeIntensity = 0
     this.timeScale = 1
+    this.winnerId = ''
   }
 
   destroy(): void {

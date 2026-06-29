@@ -1,10 +1,9 @@
 import Matter from 'matter-js'
-import { GunData, GameCallbacks, GunModelConfig } from '../types'
+import { GunData, GameCallbacks, GunModelConfig, ArenaConfig } from '../types'
 import { createGunBody } from '../entities/Gun'
 import { randRange } from '../../utils/math'
 import {
-  ARENA_WIDTH, ARENA_HEIGHT, WALL_THICKNESS,
-  MIN_SPAWN_DISTANCE, GUN_HEALTH,
+  WALL_THICKNESS, MIN_SPAWN_DISTANCE, GUN_HEALTH,
 } from '../constants'
 import { distance } from '../../utils/math'
 
@@ -13,10 +12,11 @@ export class SpawnSystem {
     world: Matter.World,
     modelA: GunModelConfig,
     modelB: GunModelConfig,
+    arena: ArenaConfig,
     _callbacks: GameCallbacks,
   ): { gunA: GunData; gunB: GunData } {
-    const spawnA = this.randomPosition()
-    const spawnB = this.randomPosition(spawnA)
+    const spawnA = this.randomPosition(arena)
+    const spawnB = this.randomPosition(arena, spawnA)
 
     const gunAData: GunData = {
       id: 'A',
@@ -55,15 +55,15 @@ export class SpawnSystem {
     return { gunA: gunAData, gunB: gunBData }
   }
 
-  private randomPosition(avoid?: { x: number; y: number }): { x: number; y: number } {
+  private randomPosition(arena: ArenaConfig, avoid?: { x: number; y: number }): { x: number; y: number } {
     const padding = WALL_THICKNESS + 60
     let pos: { x: number; y: number }
     let attempts = 0
 
     do {
       pos = {
-        x: randRange(padding, WALL_THICKNESS + ARENA_WIDTH - padding),
-        y: randRange(padding, WALL_THICKNESS + ARENA_HEIGHT - padding),
+        x: randRange(padding, WALL_THICKNESS + arena.width - padding),
+        y: randRange(padding, WALL_THICKNESS + arena.height - padding),
       }
       attempts++
     } while (

@@ -1,7 +1,5 @@
 import { GunModelConfig } from './types'
 
-export const ARENA_WIDTH = 800
-export const ARENA_HEIGHT = 600
 export const WALL_THICKNESS = 30
 
 export const GUN_HEIGHT = 22
@@ -85,9 +83,4 @@ export const GUN_MODELS: Record<string, GunModelConfig> = {
     color: '#ff8844',
     bulletColor: '#ffbb88',
   },
-}
-
-export const GUN_COLORS_BY_ID: Record<string, string> = {
-  A: '#4488ff',
-  B: '#ff4444',
 }

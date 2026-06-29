@@ -9,16 +9,18 @@ interface HUDProps {
   gunBModel: string
   winner: string | null
   state: GameState
+  betStreak?: number
+  betResult?: { correct: boolean; streak: number } | null
 }
 
-export function HUD({ gunAHealth, gunBHealth, gunAModel, gunBModel, winner, state }: HUDProps) {
+export function HUD({ gunAHealth, gunBHealth, gunAModel, gunBModel, winner, state, betStreak = 0, betResult }: HUDProps) {
   return (
     <div style={{
       display: 'flex',
       justifyContent: 'center',
       alignItems: 'center',
       gap: '24px',
-      padding: '10px 0',
+      padding: '8px 0',
       color: '#ffffff',
       fontFamily: 'monospace',
       fontSize: '16px',
@@ -33,9 +35,9 @@ export function HUD({ gunAHealth, gunBHealth, gunAModel, gunBModel, winner, stat
 
       <div style={{
         display: 'flex',
+        flexDirection: 'column',
         alignItems: 'center',
-        gap: '8px',
-        justifyContent: 'center',
+        gap: '2px',
         minWidth: '120px',
       }}>
         {state === 'BATTLE' && (
@@ -45,13 +47,22 @@ export function HUD({ gunAHealth, gunBHealth, gunAModel, gunBModel, winner, stat
           <span style={{ color: '#ffdd44', fontSize: '18px', fontWeight: 'bold' }}>K.O.</span>
         )}
         {winner && (
-          <span style={{
-            color: '#ffdd44',
-            fontWeight: 'bold',
-            fontSize: '14px',
-            textAlign: 'center',
-          }}>
+          <span style={{ color: '#ffdd44', fontWeight: 'bold', fontSize: '14px', textAlign: 'center' }}>
             {winner} Wins!
+          </span>
+        )}
+        {betResult && (
+          <span style={{
+            color: betResult.correct ? '#44ff44' : '#ff4444',
+            fontSize: '12px',
+            fontWeight: 'bold',
+          }}>
+            {betResult.correct ? '✓ Correct!' : '✗ Wrong!'} Streak: {betResult.streak}
+          </span>
+        )}
+        {betStreak > 0 && state === 'MENU' && (
+          <span style={{ color: '#ffdd44', fontSize: '11px' }}>
+            🔥 Win Streak: {betStreak}
           </span>
         )}
       </div>
@@ -68,11 +79,7 @@ export function HUD({ gunAHealth, gunBHealth, gunAModel, gunBModel, winner, stat
 }
 
 function GunHudBlock({
-  label,
-  model,
-  health,
-  color,
-  align,
+  label, model, health, color, align,
 }: {
   label: string
   model: string
@@ -82,30 +89,21 @@ function GunHudBlock({
 }) {
   return (
     <div style={{
-      display: 'flex',
-      alignItems: 'center',
-      gap: '8px',
+      display: 'flex', alignItems: 'center', gap: '8px',
       minWidth: '180px',
       flexDirection: align === 'right' ? 'row' : 'row-reverse',
     }}>
       <div style={{
-        display: 'flex',
-        flexDirection: 'column',
+        display: 'flex', flexDirection: 'column',
         alignItems: align === 'right' ? 'flex-end' : 'flex-start',
         minWidth: '70px',
       }}>
         <span style={{ color, fontWeight: 'bold', fontSize: '14px' }}>{label}</span>
-        {model && (
-          <span style={{ color: '#888', fontSize: '11px' }}>{model}</span>
-        )}
+        {model && <span style={{ color: '#888', fontSize: '11px' }}>{model}</span>}
       </div>
       <div style={{
-        width: '90px',
-        height: '14px',
-        backgroundColor: '#222',
-        borderRadius: '3px',
-        overflow: 'hidden',
-        border: '1px solid #444',
+        width: '90px', height: '14px', backgroundColor: '#222',
+        borderRadius: '3px', overflow: 'hidden', border: '1px solid #444',
       }}>
         <div style={{
           width: `${Math.max(0, Math.min(100, health))}%`,
@@ -116,11 +114,8 @@ function GunHudBlock({
         }} />
       </div>
       <span style={{
-        minWidth: '24px',
-        textAlign: 'center',
-        fontSize: '13px',
-        color: health > 30 ? '#88ff88' : '#ff8888',
-        fontWeight: 'bold',
+        minWidth: '24px', textAlign: 'center', fontSize: '13px',
+        color: health > 30 ? '#88ff88' : '#ff8888', fontWeight: 'bold',
       }}>
         {Math.round(health)}
       </span>

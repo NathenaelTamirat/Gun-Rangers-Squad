@@ -51,9 +51,45 @@ export interface GunSelections {
   gunB: string
 }
 
+export interface ArenaConfig {
+  id: string
+  name: string
+  width: number
+  height: number
+  label: string
+}
+
+export interface RoundStats {
+  shotsFired: number
+  hitsLanded: number
+  damageDealt: number
+  wallBounces: number
+}
+
+export interface BattleStats {
+  gunA: RoundStats
+  gunB: RoundStats
+  winnerId: string
+}
+
+export interface PhysicsSettings {
+  gravityX: number
+  gravityY: number
+  recoilMultiplier: number
+  restitutionMultiplier: number
+  bulletSpeedMultiplier: number
+}
+
+export interface BetState {
+  predictedWinner: string | null
+  streak: number
+  totalCorrect: number
+}
+
 export interface GameCallbacks {
   onHealthChange: (gunA: number, gunB: number) => void
   onWinner: (gunId: string) => void
   onStateChange: (state: GameState) => void
-  onSlomo?: () => void
+  onStatsUpdate?: (stats: BattleStats) => void
+  onBetResult?: (correct: boolean, streak: number) => void
 }
