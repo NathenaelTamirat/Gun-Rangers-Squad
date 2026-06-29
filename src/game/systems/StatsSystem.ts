@@ -5,7 +5,7 @@ export class StatsSystem {
   private gunB: RoundStats = this.fresh()
 
   private fresh(): RoundStats {
-    return { shotsFired: 0, hitsLanded: 0, damageDealt: 0, wallBounces: 0 }
+    return { shotsFired: 0, hitsLanded: 0, damageDealt: 0, wallBounces: 0, criticals: 0 }
   }
 
   recordShot(gunId: string): void {
@@ -13,9 +13,13 @@ export class StatsSystem {
   }
 
   recordHit(gunId: string, damage: number): void {
-    const stats = this.get(gunId)
-    stats.hitsLanded++
-    stats.damageDealt += damage
+    const s = this.get(gunId)
+    s.hitsLanded++
+    s.damageDealt += damage
+  }
+
+  recordCritical(gunId: string): void {
+    this.get(gunId).criticals++
   }
 
   recordWallBounce(): void {
@@ -28,11 +32,7 @@ export class StatsSystem {
   }
 
   getStats(winnerId: string): BattleStats {
-    return {
-      gunA: { ...this.gunA },
-      gunB: { ...this.gunB },
-      winnerId,
-    }
+    return { gunA: { ...this.gunA }, gunB: { ...this.gunB }, winnerId }
   }
 
   reset(): void {

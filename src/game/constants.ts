@@ -17,6 +17,18 @@ export const MIN_SPAWN_DISTANCE = 200
 
 export const MAX_BULLETS = 100
 export const MAX_PARTICLES = 600
+export const MAX_DAMAGE_NUMBERS = 30
+
+export const CRITICAL_CHANCE = 0.1
+export const CRITICAL_MULTIPLIER = 2
+
+export const POWERUP_SPAWN_INTERVAL = 6000
+export const POWERUP_RADIUS = 10
+export const POWERUP_SHIELD_DURATION = 8000
+export const POWERUP_DAMAGE_DURATION = 8000
+export const POWERUP_MAX_ACTIVE = 3
+
+export const DAMAGE_NUMBER_LIFE = 35
 
 export const SLOMO_DURATION = 2500
 export const SLOMO_TARGET = 0.04
@@ -38,6 +50,9 @@ export const COLORS = {
   HEALTH_BAR: '#44cc44',
   HEALTH_BAR_LOW: '#ff4444',
   TEXT: '#ffffff',
+  CRITICAL: '#ff44ff',
+  POWERUP_SHIELD: '#44ddff',
+  POWERUP_DAMAGE: '#ff8844',
 }
 
 export const GUN_MODELS: Record<string, GunModelConfig> = {

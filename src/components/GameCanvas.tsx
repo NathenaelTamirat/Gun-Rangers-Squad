@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 import { Game } from '../game/Game'
-import { GameCallbacks, GameState } from '../game/types'
+import { GameCallbacks, GameState, TournamentState } from '../game/types'
 import { ARENAS } from '../game/arenas'
 import { WALL_THICKNESS } from '../game/constants'
 
@@ -13,9 +13,13 @@ interface GameCanvasProps {
   onGameReady: (game: Game) => void
   onStatsUpdate?: (stats: any) => void
   onBetResult?: (correct: boolean, streak: number) => void
+  onTournamentUpdate?: (state: TournamentState) => void
 }
 
-export function GameCanvas({ onHealthChange, onWinner, onStateChange, onGameReady, onStatsUpdate, onBetResult }: GameCanvasProps) {
+export function GameCanvas({
+  onHealthChange, onWinner, onStateChange, onGameReady,
+  onStatsUpdate, onBetResult, onTournamentUpdate,
+}: GameCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const gameRef = useRef<Game | null>(null)
 
@@ -29,6 +33,7 @@ export function GameCanvas({ onHealthChange, onWinner, onStateChange, onGameRead
       onStateChange,
       onStatsUpdate: onStatsUpdate || (() => {}),
       onBetResult: onBetResult || (() => {}),
+      onTournamentUpdate: onTournamentUpdate || (() => {}),
     }
 
     const game = new Game(canvas, callbacks)
@@ -47,10 +52,8 @@ export function GameCanvas({ onHealthChange, onWinner, onStateChange, onGameRead
       width={ARENAS.standard.width + WALL_THICKNESS * 2}
       height={ARENAS.standard.height + WALL_THICKNESS * 2}
       style={{
-        display: 'block',
-        margin: '0 auto',
-        borderRadius: '8px',
-        border: '2px solid #444',
+        display: 'block', margin: '0 auto',
+        borderRadius: '8px', border: '2px solid #444',
       }}
     />
   )

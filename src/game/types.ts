@@ -1,4 +1,4 @@
-export type GameState = 'MENU' | 'SPAWN' | 'BATTLE' | 'SLOMO' | 'VICTORY'
+export type GameState = 'MENU' | 'SPAWN' | 'BATTLE' | 'SLOMO' | 'VICTORY' | 'PAUSED'
 
 export interface GunModelConfig {
   name: string
@@ -25,12 +25,19 @@ export interface GunData {
   maxHealth: number
   model: GunModelConfig
   body: Matter.Body
+  powerUps: GunPowerUpState
+}
+
+export interface GunPowerUpState {
+  shield: boolean
+  damageBoost: boolean
 }
 
 export interface BulletData {
   ownerId: string
   body: Matter.Body
   damage: number
+  critical: boolean
 }
 
 export interface Particle {
@@ -44,6 +51,25 @@ export interface Particle {
   size: number
   alpha: number
   type: 'spark' | 'smoke' | 'dust' | 'muzzle'
+}
+
+export interface DamageNumber {
+  x: number
+  y: number
+  text: string
+  color: string
+  life: number
+  maxLife: number
+  vy: number
+  size: number
+}
+
+export type PowerUpType = 'shield' | 'damageBoost'
+
+export interface PowerUpSpawn {
+  type: PowerUpType
+  body: Matter.Body
+  active: boolean
 }
 
 export interface GunSelections {
@@ -64,6 +90,7 @@ export interface RoundStats {
   hitsLanded: number
   damageDealt: number
   wallBounces: number
+  criticals: number
 }
 
 export interface BattleStats {
@@ -80,10 +107,16 @@ export interface PhysicsSettings {
   bulletSpeedMultiplier: number
 }
 
-export interface BetState {
-  predictedWinner: string | null
-  streak: number
-  totalCorrect: number
+export interface TournamentConfig {
+  enabled: boolean
+  bestOf: number
+}
+
+export interface TournamentState {
+  scoreA: number
+  scoreB: number
+  round: number
+  roundsToWin: number
 }
 
 export interface GameCallbacks {
@@ -92,4 +125,5 @@ export interface GameCallbacks {
   onStateChange: (state: GameState) => void
   onStatsUpdate?: (stats: BattleStats) => void
   onBetResult?: (correct: boolean, streak: number) => void
+  onTournamentUpdate?: (state: TournamentState) => void
 }

@@ -27,6 +27,7 @@ export function shoot(
       ownerId,
       body,
       damage: model.damage,
+      critical: false,
     })
   }
 

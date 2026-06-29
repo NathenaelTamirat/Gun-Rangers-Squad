@@ -28,6 +28,7 @@ export class SpawnSystem {
       maxHealth: GUN_HEALTH,
       model: modelA,
       body: null!,
+      powerUps: { shield: false, damageBoost: false },
     }
 
     const gunBData: GunData = {
@@ -40,6 +41,7 @@ export class SpawnSystem {
       maxHealth: GUN_HEALTH,
       model: modelB,
       body: null!,
+      powerUps: { shield: false, damageBoost: false },
     }
 
     const bodyA = createGunBody(spawnA.x, spawnA.y, randRange(0, Math.PI * 2), gunAData)
