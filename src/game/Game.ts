@@ -611,12 +611,12 @@ export class Game {
     const gunId = getGunIdFromBody(gunBody)
     const gun = this.guns.get(gunId)
     if (!gun) return
-    const restitution = 0.5
+    const restitution = 0.8
     const vel = gunBody.velocity
     Matter.Body.setVelocity(gunBody, { x: -vel.x * restitution, y: -vel.y * restitution })
-    // Apply a recoil impulse on impact
+    // Apply a stronger recoil impulse on impact
     applyRecoilPhysics(gunBody, gun.model, this.settings.recoilMultiplier)
-    // Dampen angular velocity on bounce
+    // Dampen angular velocity on bounce (more natural)
     Matter.Body.setAngularVelocity(gunBody, gunBody.angularVelocity * -restitution)
   }
 
