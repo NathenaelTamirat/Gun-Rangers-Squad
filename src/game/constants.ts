@@ -62,8 +62,8 @@ export const GUN_MODELS: Record<string, GunModelConfig> = {
     damage: 10,
     fireCooldownMin: 300,
     fireCooldownMax: 700,
-    recoilForce: 9,            // flings gun ~70% across arena on one shot
-    recoilAngularKick: 0.18,
+    recoilForce: 0.0048,       // stronger — clearly felt
+    recoilAngularKick: 0.08,
     bulletSpeed: 14,
     bulletSpread: 0.03,
     bulletsPerShot: 1,
@@ -74,7 +74,7 @@ export const GUN_MODELS: Record<string, GunModelConfig> = {
     stability: 0.5,
     recoverySpeed: 0.92,
     spreadGrowth: 0.015,
-    frictionAir: 0.004,
+    frictionAir: 0.004,        // low air friction — gun slides naturally
     restitution: 0.75,
   },
   rifle: {
@@ -83,8 +83,8 @@ export const GUN_MODELS: Record<string, GunModelConfig> = {
     damage: 18,
     fireCooldownMin: 500,
     fireCooldownMax: 1100,
-    recoilForce: 13,           // heavier gun, bigger kick
-    recoilAngularKick: 0.12,
+    recoilForce: 0.007,        // heavy kick
+    recoilAngularKick: 0.06,
     bulletSpeed: 22,
     bulletSpread: 0.01,
     bulletsPerShot: 1,
@@ -105,8 +105,8 @@ export const GUN_MODELS: Record<string, GunModelConfig> = {
     damage: 6,
     fireCooldownMin: 800,
     fireCooldownMax: 1500,
-    recoilForce: 22,           // violent — full arena crossing on one shot
-    recoilAngularKick: 0.35,
+    recoilForce: 0.014,        // violent backward launch
+    recoilAngularKick: 0.18,
     bulletSpeed: 10,
     bulletSpread: 0.18,
     bulletsPerShot: 5,
@@ -126,8 +126,8 @@ export const GUN_MODELS: Record<string, GunModelConfig> = {
     damage: 35,
     fireCooldownMin: 1200,
     fireCooldownMax: 2000,
-    recoilForce: 30,           // extreme — gun flies almost full arena on one shot
-    recoilAngularKick: 0.08,
+    recoilForce: 0.022,        // extreme — gun flies backward on shot
+    recoilAngularKick: 0.04,
     bulletSpeed: 30,
     bulletSpread: 0.005,
     bulletsPerShot: 1,

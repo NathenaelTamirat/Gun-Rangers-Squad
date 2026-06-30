@@ -442,10 +442,10 @@ export class Game {
     }
 
     if (gunId === 'A') {
-      applyRecoilPhysics(gun.body, model, this.settings.recoilMultiplier, this.recoilState)
+      applyRecoilPhysics(gun.body, model, this.settings.recoilMultiplier)
       applyRecoilPlayer(this.recoilState, model, this.settings.recoilMultiplier, performance.now())
     } else {
-      applyRecoilPhysics(gun.body, model, this.settings.recoilMultiplier, this.aiRecoilState)
+      applyRecoilPhysics(gun.body, model, this.settings.recoilMultiplier)
       applyRecoilPlayer(this.aiRecoilState, model, this.settings.recoilMultiplier, performance.now())
     }
 
@@ -453,9 +453,8 @@ export class Game {
     if (crit) this.statsSystem.recordCritical(gunId)
 
     const tip = getBarrelTip(gun.body, model.length)
-    // Shake scales with actual recoil force magnitude
-    const shakeMag = Math.min(model.recoilForce * 0.8, 14)
-    this.shakeIntensity = Math.min(this.shakeIntensity + shakeMag * (crit ? 1.8 : 1), 22)
+    const shakeMag = model.recoilForce * 60
+    this.shakeIntensity = Math.min(this.shakeIntensity + shakeMag * (crit ? 2 : 1), 20)
 
     this.spawnMuzzleFlash(tip.x, tip.y)
     this.spawnSmoke(tip.x, tip.y, 2)
