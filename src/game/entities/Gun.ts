@@ -2,18 +2,18 @@ import Matter from 'matter-js'
 import { GunData } from '../types'
 import {
   GUN_HEIGHT,
-  GUN_RESTITUTION, GUN_FRICTION, GUN_FRICTION_AIR, GUN_ANGULAR_DAMPING,
+  GUN_FRICTION, GUN_ANGULAR_DAMPING,
 } from '../constants'
 
 export function createGunBody(x: number, y: number, angle: number, gunData: GunData): Matter.Body {
   const len = gunData.model.length
   const mass = gunData.model.mass
 
-  const body = Matter.Bodies.rectangle(x, y, len, GUN_HEIGHT, {
+  const opts: Matter.IBodyDefinition = {
     mass,
-    restitution: GUN_RESTITUTION,
+    restitution: gunData.model.restitution,
     friction: GUN_FRICTION,
-    frictionAir: GUN_FRICTION_AIR,
+    frictionAir: gunData.model.frictionAir,
     angle,
     label: `gun-${gunData.id}`,
     collisionFilter: {
@@ -21,7 +21,13 @@ export function createGunBody(x: number, y: number, angle: number, gunData: GunD
       category: 0x0002,
       mask: 0x0001 | 0x0002 | 0x0004,
     },
-  } as Matter.IBodyDefinition)
+  }
+
+  if (gunData.model.customInertia !== undefined) {
+    opts.inertia = gunData.model.customInertia
+  }
+
+  const body = Matter.Bodies.rectangle(x, y, len, GUN_HEIGHT, opts)
 
   ;(body as any).angularDamping = GUN_ANGULAR_DAMPING
 

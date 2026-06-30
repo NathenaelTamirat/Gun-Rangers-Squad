@@ -6,9 +6,11 @@ import { HUD } from '../components/HUD'
 import { UI } from '../components/UI'
 import { GunSelector } from '../components/GunSelector'
 import { ArenaSelector } from '../components/ArenaSelector'
+import { DifficultySlider } from '../components/DifficultySlider'
 import { StatsPanel } from '../components/StatsPanel'
-import { SettingsPanel } from '../components/PhysicsSettings'
-import { GameState, GunSelections, PhysicsSettings, BattleStats, TournamentState, TournamentConfig } from '../game/types'
+import { CheckoutPanel } from '../components/CheckoutPanel'
+import { PrivacyConsent } from '../components/PrivacyConsent'
+import { BotProfile, GameState, GunSelections, PhysicsSettings, BattleStats, TournamentState } from '../game/types'
 import { GUN_MODELS } from '../game/constants'
 import { DEFAULT_SETTINGS } from '../game/arenas'
 import { Game } from '../game/Game'
@@ -21,7 +23,7 @@ export default function Home() {
   const [gunBHealth, setGunBHealth] = useState(100)
   const [winner, setWinner] = useState<string | null>(null)
   const [gameState, setGameState] = useState<GameState>('MENU')
-  const [selections, setSelections] = useState<GunSelections>({ gunA: 'pistol', gunB: 'pistol' })
+  const [selections, setSelections] = useState<GunSelections>({ gunA: 'pistol', gunB: 'random' })
   const [arena, setArena] = useState('standard')
   const [settings, setSettings] = useState<PhysicsSettings>({ ...DEFAULT_SETTINGS })
   const [betResult, setBetResult] = useState<{ correct: boolean; streak: number } | null>(null)
@@ -32,7 +34,8 @@ export default function Home() {
   const [completedLevels, setCompletedLevels] = useState<number[]>([])
   const [currentLevel, setCurrentLevel] = useState<LevelConfig | null>(null)
   const [tournamentScore, setTournamentScore] = useState<{ a: number; b: number } | null>(null)
-  const [showTooltip, setShowTooltip] = useState<string | null>(null)
+const [botDifficulty, setBotDifficultyLevel] = useState(3)
+  const [botProfile, setBotProfile] = useState<BotProfile | null>(null)
   const gameRef = useRef<Game | null>(null)
 
   useEffect(() => {
@@ -40,6 +43,13 @@ export default function Home() {
     const bet = JSON.parse(localStorage.getItem('recoil_duel_bet') || '{"streak":0,"total":0}')
     setBetStreak(bet.streak)
   }, [])
+
+  // Update bot difficulty in the Game instance whenever it changes
+  useEffect(() => {
+    if (gameRef.current) {
+      gameRef.current.setBotDifficulty(botDifficulty);
+    }
+  }, [botDifficulty]);
 
   const applyLevel = useCallback((level: LevelConfig) => {
     setSelections({ gunA: level.gunA, gunB: level.gunB })
@@ -55,13 +65,13 @@ export default function Home() {
   }, [])
 
   const handleWinner = useCallback((gunId: string) => {
-    setWinner(gunId === 'A' ? 'Gun A' : 'Gun B')
+    setWinner(gunId === 'A' ? 'You' : 'Enemy')
   }, [])
 
   const handleStateChange = useCallback((state: GameState) => {
     setGameState(state)
     if (state === 'MENU') {
-      setWinner(null); setBattleStats(null); setBetResult(null)
+      setWinner(null); setBattleStats(null); setBetResult(null); setBotProfile(null)
     }
   }, [])
 
@@ -71,6 +81,14 @@ export default function Home() {
 
   const handleStatsUpdate = useCallback((stats: BattleStats) => {
     setBattleStats(stats)
+    if (stats.winnerId === 'A' && currentLevel) {
+      const updated = markLevelComplete(currentLevel.id)
+      setCompletedLevels(updated)
+    }
+  }, [currentLevel])
+
+  const handleBotProfile = useCallback((profile: BotProfile) => {
+    setBotProfile(profile)
   }, [])
 
   const handleBetResult = useCallback((correct: boolean, streak: number) => {
@@ -91,30 +109,25 @@ export default function Home() {
     return isLevelUnlocked(id, completedLevels)
   }, [completedLevels])
 
-  const launch = useCallback((predictedGun: string | null) => {
-    if (predictedGun) (window as any).__betPrediction = predictedGun
-    else (window as any).__betPrediction = null
+  const launch = useCallback(() => {
     setWinner(null); setGunAHealth(100); setGunBHealth(100)
     setBattleStats(null); setBetResult(null)
     setTournamentScore(null)
-
-    const tournConf: TournamentConfig | undefined = undefined
+    setBotProfile(null)
 
     gameRef.current?.startBattle({
       selections, arena, settings,
-      predictedWinner: predictedGun,
-      tournament: tournConf,
+      predictedWinner: null,
+      tournament: undefined,
     })
   }, [selections, arena, settings])
 
-  const handleBetA = useCallback(() => launch('A'), [launch])
-  const handleBetB = useCallback(() => launch('B'), [launch])
-  const handleStart = useCallback(() => launch(null), [launch])
+  const handleStart = useCallback(() => launch(), [launch])
 
   const handleRestart = useCallback(() => {
     gameRef.current?.reset()
     setWinner(null); setGunAHealth(100); setGunBHealth(100)
-    setBattleStats(null); setBetResult(null); setTournamentScore(null)
+    setBattleStats(null); setBetResult(null); setTournamentScore(null); setBotProfile(null)
     setCurrentLevel(null)
   }, [])
 
@@ -126,6 +139,9 @@ export default function Home() {
 
   const isMenu = gameState === 'MENU'
   const isVictory = gameState === 'VICTORY'
+  const isBattle = gameState === 'BATTLE'
+  const isSlomo = gameState === 'SLOMO'
+  const isPaused = gameState === 'PAUSED'
 
   return (
     <div style={{
@@ -140,13 +156,15 @@ export default function Home() {
           style={{ padding: '4px 12px', fontSize: '11px', fontFamily: 'monospace', color: '#888', background: 'none', border: '1px solid #444', borderRadius: '4px', cursor: 'pointer', textTransform: 'uppercase' }}>
           {viewMode === 'levels' ? 'Free Play' : 'Levels'}
         </button>
+        <DifficultySlider level={botDifficulty} onChange={setBotDifficultyLevel} />
       </div>
 
       <HUD
         gunAHealth={gunAHealth} gunBHealth={gunBHealth}
         gunAModel={GUN_MODELS[selections.gunA]?.name ?? ''}
-        gunBModel={GUN_MODELS[selections.gunB]?.name ?? ''}
+        gunBModel={GUN_MODELS[selections.gunB]?.name ?? 'Random'}
         winner={winner} state={gameState}
+        botLabel={botProfile?.label}
         betStreak={betStreak} betResult={betResult}
         tournamentScore={tournamentScore}
         soundEnabled={soundEnabled} onToggleSound={handleToggleSound}
@@ -176,24 +194,29 @@ export default function Home() {
         </div>
       )}
 
+      {(isBattle || isSlomo || isPaused) && (
+        <div style={{
+          fontFamily: 'monospace', fontSize: '12px', color: '#888',
+          padding: '2px 0', letterSpacing: '1px',
+        }}>
+          {isBattle && <span>Tap or click the arena to shoot · recoil aims both guns · <span style={{ color: '#555' }}>SPACE to pause</span></span>}
+        </div>
+      )}
+
       <GameCanvas
         onHealthChange={handleHealthChange}
         onWinner={handleWinner}
         onStateChange={handleStateChange}
         onGameReady={handleGameReady}
+        onBotProfile={handleBotProfile}
         onStatsUpdate={handleStatsUpdate}
         onBetResult={handleBetResult}
         onTournamentUpdate={handleTournamentUpdate}
       />
 
-      {isMenu && (
-        <div style={{ display: 'flex', gap: '10px', padding: '6px 0' }}>
-          <BetButton color="#4488ff" label="Bet Gun A" disabled={!isMenu} onClick={handleBetA} />
-          <BetButton color="#ff4444" label="Bet Gun B" disabled={!isMenu} onClick={handleBetB} />
-        </div>
-      )}
-
       <UI state={gameState} onStart={handleStart} onRestart={handleRestart} />
+
+      <CheckoutPanel battleStats={battleStats} visible={true} />
 
       {isMenu && viewMode === 'free' && (
         <SettingsPanel settings={settings} onChange={setSettings} disabled={!isMenu} />
@@ -219,23 +242,9 @@ export default function Home() {
       }}>
         Privacy Policy
       </a>
-    </div>
-  )
-}
 
-function BetButton({ color, label, disabled, onClick }: {
-  color: string; label: string; disabled: boolean; onClick: () => void
-}) {
-  return (
-    <button onClick={onClick} disabled={disabled} style={{
-      padding: '7px 22px', fontSize: '13px', fontWeight: 'bold', fontFamily: 'monospace',
-      color: '#fff', backgroundColor: disabled ? '#222' : color,
-      border: `2px solid ${color}`, borderRadius: '6px',
-      cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.4 : 1,
-      textTransform: 'uppercase', letterSpacing: '1px', transition: 'all 0.15s ease',
-    }}>
-      {label}
-    </button>
+      <PrivacyConsent />
+    </div>
   )
 }
 
@@ -275,6 +284,30 @@ function LevelPanel({ levels, completedIds, onSelect, currentLevel, isUnlocked }
           </button>
         )
       })}
+    </div>
+  )
+}
+
+function SettingsPanel({ settings, onChange, disabled }: {
+  settings: PhysicsSettings
+  onChange: (s: PhysicsSettings) => void
+  disabled: boolean
+}) {
+  return (
+    <div style={{
+      display: 'flex', gap: '16px', padding: '6px 0', fontFamily: 'monospace',
+      fontSize: '12px', color: '#888', opacity: disabled ? 0.4 : 1,
+    }}>
+      <label>Gravity X <input type="range" min={-2} max={2} step={0.1} value={settings.gravityX}
+        onChange={e => onChange({ ...settings, gravityX: parseFloat(e.target.value) })} disabled={disabled} /></label>
+      <label>Gravity Y <input type="range" min={-2} max={2} step={0.1} value={settings.gravityY}
+        onChange={e => onChange({ ...settings, gravityY: parseFloat(e.target.value) })} disabled={disabled} /></label>
+      <label>Recoil <input type="range" min={0} max={3} step={0.1} value={settings.recoilMultiplier}
+        onChange={e => onChange({ ...settings, recoilMultiplier: parseFloat(e.target.value) })} disabled={disabled} /></label>
+      <label>Bounce <input type="range" min={0} max={2} step={0.1} value={settings.restitutionMultiplier}
+        onChange={e => onChange({ ...settings, restitutionMultiplier: parseFloat(e.target.value) })} disabled={disabled} /></label>
+      <label>Speed <input type="range" min={0.5} max={3} step={0.1} value={settings.bulletSpeedMultiplier}
+        onChange={e => onChange({ ...settings, bulletSpeedMultiplier: parseFloat(e.target.value) })} disabled={disabled} /></label>
     </div>
   )
 }

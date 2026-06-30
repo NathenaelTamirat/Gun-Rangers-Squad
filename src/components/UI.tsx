@@ -31,7 +31,7 @@ export function UI({ state, onStart, onRestart, onNextRound, tournamentActive, t
         <GameButton onClick={onRestart} color="#ff8844">New Battle</GameButton>
       )}
       {state === 'BATTLE' && (
-        <GameButton disabled color="#666">Fighting... <span style={{ fontSize: '11px', color: '#888' }}>SPACE to pause</span></GameButton>
+        <GameButton disabled color="#666">Tap arena to shoot <span style={{ fontSize: '11px', color: '#888' }}>SPACE to pause</span></GameButton>
       )}
       {state === 'SLOMO' && <GameButton disabled color="#ffdd44">K.O.!</GameButton>}
       {state === 'PAUSED' && <GameButton disabled color="#88bbff">⏸ Paused</GameButton>}

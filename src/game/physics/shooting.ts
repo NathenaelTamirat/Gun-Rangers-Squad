@@ -8,19 +8,23 @@ export function shoot(
   ownerId: string,
   world: Matter.World,
   model: GunModelConfig,
+  dynamicSpread?: number,
 ): BulletData[] {
   const tip = getBarrelTip(gunBody, model.length)
   const angle = getBarrelAngle(gunBody)
   const bullets: BulletData[] = []
+  const spread = dynamicSpread ?? model.bulletSpread
 
   for (let i = 0; i < model.bulletsPerShot; i++) {
-    const spread = (Math.random() - 0.5) * model.bulletSpread
-    const bulletAngle = angle + spread
+    const spreadAngle = (Math.random() - 0.5) * spread
+    const bulletAngle = angle + spreadAngle
+    const spawnX = tip.x + Math.cos(bulletAngle) * 8
+    const spawnY = tip.y + Math.sin(bulletAngle) * 8
 
     const vx = Math.cos(bulletAngle) * model.bulletSpeed
     const vy = Math.sin(bulletAngle) * model.bulletSpeed
 
-    const body = createBulletBody(tip.x, tip.y, vx, vy, ownerId)
+    const body = createBulletBody(spawnX, spawnY, vx, vy, ownerId)
     Matter.Composite.add(world, body)
 
     bullets.push({
@@ -28,6 +32,8 @@ export function shoot(
       body,
       damage: model.damage,
       critical: false,
+      prevX: spawnX,
+      prevY: spawnY,
     })
   }
 

@@ -3,7 +3,7 @@ import { GunData, GameCallbacks, GunModelConfig, ArenaConfig } from '../types'
 import { createGunBody } from '../entities/Gun'
 import { randRange } from '../../utils/math'
 import {
-  WALL_THICKNESS, MIN_SPAWN_DISTANCE, GUN_HEALTH,
+  WALL_THICKNESS, MIN_SPAWN_DISTANCE, GUN_HEALTH, COLORS,
 } from '../constants'
 import { distance } from '../../utils/math'
 
@@ -20,10 +20,10 @@ export class SpawnSystem {
 
     const gunAData: GunData = {
       id: 'A',
-      label: 'Gun A',
+      label: 'You',
       modelName: modelA.name,
-      color: modelA.color,
-      bulletColor: modelA.bulletColor,
+      color: COLORS.GUN_A,
+      bulletColor: COLORS.BULLET_A,
       health: GUN_HEALTH,
       maxHealth: GUN_HEALTH,
       model: modelA,
@@ -33,10 +33,10 @@ export class SpawnSystem {
 
     const gunBData: GunData = {
       id: 'B',
-      label: 'Gun B',
+      label: 'Bot',
       modelName: modelB.name,
-      color: modelB.color,
-      bulletColor: modelB.bulletColor,
+      color: COLORS.GUN_B,
+      bulletColor: COLORS.BULLET_B,
       health: GUN_HEALTH,
       maxHealth: GUN_HEALTH,
       model: modelB,

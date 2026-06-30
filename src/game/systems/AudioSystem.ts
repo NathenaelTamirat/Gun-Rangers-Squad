@@ -1,5 +1,6 @@
 export class AudioSystem {
   private _enabled: boolean = true
+  private _ctx: AudioContext | null = null
 
   constructor() {
     try {
@@ -13,6 +14,18 @@ export class AudioSystem {
 
   setEnabled(val: boolean): void {
     this._enabled = val
+  }
+
+  private get ctx(): AudioContext {
+    if (!this._ctx) {
+      const AC = window.AudioContext || (window as any).webkitAudioContext
+      this._ctx = new AC()
+    }
+    if (this._ctx.state === 'closed') {
+      const AC = window.AudioContext || (window as any).webkitAudioContext
+      this._ctx = new AC()
+    }
+    return this._ctx
   }
 
   playShoot(): void {
@@ -52,14 +65,13 @@ export class AudioSystem {
     if (!this._enabled) return
 
     try {
-      const AC = window.AudioContext || (window as any).webkitAudioContext
-      const ctx = new AC()
+      const ctx = this.ctx
       const osc = ctx.createOscillator()
       const gain = ctx.createGain()
 
       osc.type = type
       osc.frequency.value = freq
-      gain.gain.value = volume
+      gain.gain.setValueAtTime(volume, ctx.currentTime)
       gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration)
 
       osc.connect(gain)
@@ -67,8 +79,6 @@ export class AudioSystem {
 
       osc.start(ctx.currentTime)
       osc.stop(ctx.currentTime + duration)
-
-      osc.onended = () => ctx.close()
     } catch {
       // Silently fail if audio not available
     }

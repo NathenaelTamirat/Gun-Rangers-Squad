@@ -6,7 +6,6 @@ export const GUN_HEIGHT = 22
 export const GUN_HEALTH = 100
 export const GUN_RESTITUTION = 0.4
 export const GUN_FRICTION = 0.6
-export const GUN_FRICTION_AIR = 0.01
 export const GUN_ANGULAR_DAMPING = 0.08
 
 export const BULLET_RADIUS = 3
@@ -58,10 +57,12 @@ export const COLORS = {
 export const GUN_MODELS: Record<string, GunModelConfig> = {
   pistol: {
     name: 'Pistol',
+    summary: 'Balanced recoil, quick follow-up shots, forgiving handling.',
     damage: 10,
     fireCooldownMin: 300,
     fireCooldownMax: 700,
-    recoilForce: 0.04,
+    recoilForce: 0.075,
+    recoilAngularKick: 0.014,
     bulletSpeed: 14,
     bulletSpread: 0.03,
     bulletsPerShot: 1,
@@ -69,13 +70,20 @@ export const GUN_MODELS: Record<string, GunModelConfig> = {
     mass: 2.5,
     color: '#4488ff',
     bulletColor: '#88bbff',
+    stability: 0.6,
+    recoverySpeed: 0.92,
+    spreadGrowth: 0.015,
+    frictionAir: 0.02,
+    restitution: 0.6,
   },
   rifle: {
     name: 'Rifle',
+    summary: 'Fast and accurate, with long-body torque and slower shots.',
     damage: 18,
     fireCooldownMin: 500,
     fireCooldownMax: 1100,
-    recoilForce: 0.08,
+    recoilForce: 0.105,
+    recoilAngularKick: 0.012,
     bulletSpeed: 22,
     bulletSpread: 0.01,
     bulletsPerShot: 1,
@@ -83,13 +91,21 @@ export const GUN_MODELS: Record<string, GunModelConfig> = {
     mass: 4,
     color: '#44dd88',
     bulletColor: '#88ffbb',
+    stability: 0.85,
+    recoverySpeed: 0.95,
+    spreadGrowth: 0.008,
+    frictionAir: 0.008,
+    restitution: 0.3,
+    customInertia: 2600,
   },
   shotgun: {
     name: 'Shotgun',
+    summary: 'Wide pellet cone and heavy recoil that can violently reposition the gun.',
     damage: 6,
     fireCooldownMin: 800,
     fireCooldownMax: 1500,
-    recoilForce: 0.14,
+    recoilForce: 0.18,
+    recoilAngularKick: 0.036,
     bulletSpeed: 10,
     bulletSpread: 0.18,
     bulletsPerShot: 5,
@@ -97,5 +113,10 @@ export const GUN_MODELS: Record<string, GunModelConfig> = {
     mass: 3.5,
     color: '#ff8844',
     bulletColor: '#ffbb88',
+    stability: 0.45,
+    recoverySpeed: 0.85,
+    spreadGrowth: 0.04,
+    frictionAir: 0.05,
+    restitution: 0.2,
   },
 }

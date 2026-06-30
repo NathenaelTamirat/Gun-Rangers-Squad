@@ -2,10 +2,12 @@ export type GameState = 'MENU' | 'SPAWN' | 'BATTLE' | 'SLOMO' | 'VICTORY' | 'PAU
 
 export interface GunModelConfig {
   name: string
+  summary: string
   damage: number
   fireCooldownMin: number
   fireCooldownMax: number
   recoilForce: number
+  recoilAngularKick: number
   bulletSpeed: number
   bulletSpread: number
   bulletsPerShot: number
@@ -13,6 +15,12 @@ export interface GunModelConfig {
   mass: number
   color: string
   bulletColor: string
+  stability: number
+  recoverySpeed: number
+  spreadGrowth: number
+  frictionAir: number
+  restitution: number
+  customInertia?: number
 }
 
 export interface GunData {
@@ -38,6 +46,8 @@ export interface BulletData {
   body: Matter.Body
   damage: number
   critical: boolean
+  prevX: number
+  prevY: number
 }
 
 export interface Particle {
@@ -50,7 +60,9 @@ export interface Particle {
   color: string
   size: number
   alpha: number
-  type: 'spark' | 'smoke' | 'dust' | 'muzzle'
+  type: 'spark' | 'smoke' | 'dust' | 'muzzle' | 'casing'
+  rotation?: number
+  rotationSpeed?: number
 }
 
 export interface DamageNumber {
@@ -75,6 +87,17 @@ export interface PowerUpSpawn {
 export interface GunSelections {
   gunA: string
   gunB: string
+}
+
+export type BotDifficultyId = 'wild' | 'steady' | 'deadeye'
+
+export interface BotProfile {
+  id: BotDifficultyId
+  label: string
+  aimTolerance: number
+  triggerPatience: number
+  mistakeChance: number
+  stabilizingTorque: number
 }
 
 export interface ArenaConfig {
@@ -123,6 +146,7 @@ export interface GameCallbacks {
   onHealthChange: (gunA: number, gunB: number) => void
   onWinner: (gunId: string) => void
   onStateChange: (state: GameState) => void
+  onBotProfile?: (profile: BotProfile) => void
   onStatsUpdate?: (stats: BattleStats) => void
   onBetResult?: (correct: boolean, streak: number) => void
   onTournamentUpdate?: (state: TournamentState) => void

@@ -3,7 +3,7 @@ import {
   GameState, GunData, BulletData, Particle, DamageNumber,
   PowerUpSpawn, PowerUpType, GameCallbacks,
   GunSelections, ArenaConfig, PhysicsSettings, BattleStats,
-  TournamentState, TournamentConfig,
+  TournamentState, TournamentConfig, BotProfile, GunModelConfig,
 } from './types'
 import {
   WALL_THICKNESS, MAX_BULLETS, MAX_PARTICLES, MAX_DAMAGE_NUMBERS,
@@ -13,7 +13,7 @@ import {
   CRITICAL_CHANCE, CRITICAL_MULTIPLIER,
   POWERUP_SPAWN_INTERVAL, POWERUP_RADIUS,
   POWERUP_SHIELD_DURATION, POWERUP_DAMAGE_DURATION, POWERUP_MAX_ACTIVE,
-  DAMAGE_NUMBER_LIFE, GUN_HEALTH,
+  DAMAGE_NUMBER_LIFE, GUN_HEALTH, GUN_HEIGHT,
 } from './constants'
 import { ARENAS, DEFAULT_SETTINGS } from './arenas'
 import { RandomSystem } from './systems/RandomSystem'
@@ -22,13 +22,46 @@ import { AudioSystem } from './systems/AudioSystem'
 import { RenderSystem } from './systems/RenderSystem'
 import { StatsSystem } from './systems/StatsSystem'
 import { shoot } from './physics/shooting'
-import { applyRecoil } from './physics/recoil'
+import {
+  RecoilState, createRecoilState,
+  applyRecoilPhysics, applyRecoilPlayer, decayPlayerRecoil,
+  decayAIRecoil, getDynamicSpread,
+  gaussianRandom,
+} from './physics/recoil'
 import {
   isBulletCollision, isGunCollision, getBodyOwnerId,
   isBulletOutOfBounds, getGunIdFromBody,
 } from './physics/collisions'
 import { getBarrelTip } from './entities/Gun'
 import { randRange } from '../utils/math'
+import { saveBattle } from './database'
+
+const BOT_PROFILES: BotProfile[] = [
+  {
+    id: 'wild',
+    label: 'Wild Bot',
+    aimTolerance: 0.62,
+    triggerPatience: 0.2,
+    mistakeChance: 0.3,
+    stabilizingTorque: 0.0000015,
+  },
+  {
+    id: 'steady',
+    label: 'Steady Bot',
+    aimTolerance: 0.42,
+    triggerPatience: 0.52,
+    mistakeChance: 0.13,
+    stabilizingTorque: 0.0000025,
+  },
+  {
+    id: 'deadeye',
+    label: 'Deadeye Bot',
+    aimTolerance: 0.24,
+    triggerPatience: 0.78,
+    mistakeChance: 0.05,
+    stabilizingTorque: 0.0000035,
+  },
+]
 
 export class Game {
   private canvas: HTMLCanvasElement
@@ -64,6 +97,24 @@ export class Game {
   private tournament: TournamentState = { scoreA: 0, scoreB: 0, round: 1, roundsToWin: 2 }
   private tournamentConfig: TournamentConfig = { enabled: false, bestOf: 3 }
   private boundKeyHandler: (e: KeyboardEvent) => void
+  private boundPointerDown: (e: PointerEvent) => void
+  private playerFireTimer = 0
+  private recoilState: RecoilState = createRecoilState()
+  private aiRecoilState: RecoilState = createRecoilState()
+  private botProfile: BotProfile = BOT_PROFILES[1]
+  private botDifficultyLevel: number = 3
+  // Adjust bot difficulty (1-5) by scaling profile parameters and storing level
+  public setBotDifficulty(level: number): void {
+    const clamped = Math.max(1, Math.min(5, level))
+    this.botDifficultyLevel = clamped
+    const base = this.botProfile
+    const aimTolerance = 0.62 - ((clamped - 1) / 4) * (0.62 - 0.24)
+    const triggerPatience = 0.2 + ((clamped - 1) / 4) * (0.78 - 0.2)
+    const mistakeChance = 0.3 - ((clamped - 1) / 4) * (0.3 - 0.05)
+    this.botProfile = { ...base, aimTolerance, triggerPatience, mistakeChance }
+  }
+  private lastHealthUpdateTime: number = 0
+  private readonly HEALTH_UPDATE_INTERVAL = 100
 
   constructor(canvas: HTMLCanvasElement, callbacks: GameCallbacks) {
     this.canvas = canvas
@@ -84,7 +135,9 @@ export class Game {
     this.setupCollisions()
 
     this.boundKeyHandler = this.handleKeyDown.bind(this)
+    this.boundPointerDown = this.handlePointerDown.bind(this)
     window.addEventListener('keydown', this.boundKeyHandler)
+    this.canvas.addEventListener('pointerdown', this.boundPointerDown)
 
     this.lastTimestamp = performance.now()
     this.gameLoop(this.lastTimestamp)
@@ -103,6 +156,21 @@ export class Game {
         this.callbacks.onStateChange(this.state)
       }
     }
+  }
+
+  private handlePointerDown(e: PointerEvent): void {
+    if (e.pointerType === 'mouse' && e.button !== 0) return
+    e.preventDefault()
+    if (this.state === 'BATTLE') {
+      this.tryPlayerFire()
+    }
+  }
+
+  private tryPlayerFire(): void {
+    if (this.playerFireTimer > 0) return
+    this.fireGun('A')
+    const gun = this.guns.get('A')
+    if (gun) this.playerFireTimer = gun.model.fireCooldownMin
   }
 
   private resizeCanvas(): void {
@@ -150,6 +218,8 @@ export class Game {
     else if (isBulletB && isGunA) this.handleBulletHitGun(bodyB, bodyA)
     else if (isBulletA && bodyB.label === 'wall') this.handleBulletHitWall(bodyA)
     else if (isBulletB && bodyA.label === 'wall') this.handleBulletHitWall(bodyB)
+    else if (isGunA && bodyB.label === 'wall') this.handleGunWallCollision(bodyA)
+    else if (isGunB && bodyA.label === 'wall') this.handleGunWallCollision(bodyB)
     else if (isGunA && isPUpB) this.handlePowerUpPickup(bodyA, bodyB)
     else if (isGunB && isPUpA) this.handlePowerUpPickup(bodyB, bodyA)
   }
@@ -197,14 +267,13 @@ export class Game {
       this.statsSystem.recordHit(bulletOwner, damage)
     }
 
-    const hpA = this.guns.get('A')?.health ?? 0
-    const hpB = this.guns.get('B')?.health ?? 0
-    this.callbacks.onHealthChange(hpA, hpB)
-
     this.bodiesToRemove.push(bullet.body)
     this.bullets.splice(bulletIdx, 1)
 
     if (targetGun.health <= 0) {
+      const hpA = this.guns.get('A')?.health ?? 0
+      const hpB = this.guns.get('B')?.health ?? 0
+      this.callbacks.onHealthChange(hpA, hpB)
       this.winnerId = attackerGun.id
       this.state = 'SLOMO'
       this.slomoStartTime = performance.now()
@@ -283,19 +352,42 @@ export class Game {
     this.state = 'SPAWN'
     this.callbacks.onStateChange('SPAWN')
 
-    const modelA = GUN_MODELS[this.selections.gunA] ?? GUN_MODELS.pistol
-    const modelB = GUN_MODELS[this.selections.gunB] ?? GUN_MODELS.pistol
+    const modelA = this.resolveGunModel(this.selections.gunA, GUN_MODELS.pistol)
+    const modelB = this.resolveGunModel(this.selections.gunB, GUN_MODELS.pistol)
     const { gunA, gunB } = this.spawnSystem.spawnGuns(this.world, modelA, modelB, this.arena, this.callbacks)
     this.guns.set('A', gunA)
     this.guns.set('B', gunB)
 
     this.state = 'BATTLE'
     this.nextFireTimer = 1500
+    this.playerFireTimer = 0
+    this.recoilState = createRecoilState()
+    this.aiRecoilState = createRecoilState()
+    this.botProfile = this.createBotProfile()
+    // Apply stored difficulty level to the newly created bot profile
+    this.setBotDifficulty(this.botDifficultyLevel)
+    this.callbacks.onBotProfile?.(this.botProfile)
     this.timeScale = 1
     this.lastTimestamp = performance.now()
     this.callbacks.onStateChange('BATTLE')
 
     this.powerUpTimer = POWERUP_SPAWN_INTERVAL
+  }
+
+  private resolveGunModel(selection: string, fallback: GunModelConfig): GunModelConfig {
+    if (selection !== 'random') return GUN_MODELS[selection] ?? fallback
+    const keys = Object.keys(GUN_MODELS)
+    return GUN_MODELS[keys[Math.floor(Math.random() * keys.length)]] ?? fallback
+  }
+
+  private createBotProfile(): BotProfile {
+    const base = BOT_PROFILES[Math.floor(Math.random() * BOT_PROFILES.length)] ?? BOT_PROFILES[1]
+    return {
+      ...base,
+      aimTolerance: Math.max(0.16, gaussianRandom(base.aimTolerance, 0.04)),
+      triggerPatience: Math.max(0.05, Math.min(0.95, gaussianRandom(base.triggerPatience, 0.08))),
+      mistakeChance: Math.max(0.01, Math.min(0.5, gaussianRandom(base.mistakeChance, 0.04))),
+    }
   }
 
   private applySettings(): void {
@@ -319,6 +411,14 @@ export class Game {
 
     const crit = Math.random() < CRITICAL_CHANCE
     const finalDamage = Math.round(model.damage * damageMul * (crit ? CRITICAL_MULTIPLIER : 1))
+
+    let dynamicSpread: number | undefined
+    if (gunId === 'A') {
+      dynamicSpread = getDynamicSpread(model, this.recoilState.accumulatedSpread, Math.abs(gun.body.velocity.x) + Math.abs(gun.body.velocity.y))
+    } else {
+      dynamicSpread = getDynamicSpread(model, this.aiRecoilState.accumulatedSpread, Math.abs(gun.body.velocity.x) + Math.abs(gun.body.velocity.y))
+    }
+
     const adjustedModel = {
       ...model,
       bulletSpeed: model.bulletSpeed * speedMul,
@@ -326,7 +426,7 @@ export class Game {
       damage: finalDamage,
     }
 
-    const bulletDataList = shoot(gun.body, gunId, this.world, adjustedModel)
+    const bulletDataList = shoot(gun.body, gunId, this.world, adjustedModel, dynamicSpread)
     for (const bd of bulletDataList) {
       bd.critical = crit
       if (this.bullets.length >= MAX_BULLETS) {
@@ -336,13 +436,24 @@ export class Game {
       this.bullets.push(bd)
     }
 
-    applyRecoil(gun.body, model.length, adjustedModel.recoilForce)
+    if (gunId === 'A') {
+      applyRecoilPhysics(gun.body, model, this.settings.recoilMultiplier)
+      applyRecoilPlayer(this.recoilState, model, this.settings.recoilMultiplier, performance.now())
+    } else {
+      applyRecoilPhysics(gun.body, model, this.settings.recoilMultiplier)
+      applyRecoilPlayer(this.aiRecoilState, model, this.settings.recoilMultiplier, performance.now())
+    }
+
     this.statsSystem.recordShot(gunId)
     if (crit) this.statsSystem.recordCritical(gunId)
 
     const tip = getBarrelTip(gun.body, model.length)
+    const shakeMag = model.recoilForce * 60
+    this.shakeIntensity = Math.min(this.shakeIntensity + shakeMag * (crit ? 2 : 1), 20)
+
     this.spawnMuzzleFlash(tip.x, tip.y)
     this.spawnSmoke(tip.x, tip.y, 2)
+    this.spawnCasing(tip.x, tip.y, gun.body.angle)
     this.audioSystem.playShoot()
 
     if (crit) {
@@ -361,11 +472,29 @@ export class Game {
 
     if (this.state === 'BATTLE') {
       Matter.Engine.update(this.engine, rawDelta)
+      decayPlayerRecoil(this.recoilState, rawDelta)
+      decayAIRecoil(this.aiRecoilState, rawDelta)
+      for (const [id, gun] of this.guns) {
+        if (gun.health > 0) {
+          Matter.Body.setAngularVelocity(gun.body, gun.body.angularVelocity * 0.88)
+          if (id === 'B') this.applyBotStabilizer(gun)
+          this.keepGunInsideArena(gun)
+        }
+      }
       this.processRemovals()
       this.cleanupBullets()
-      this.updateFiring(rawDelta)
+      this.updateAIFiring(rawDelta)
+      this.updatePlayerFiring(rawDelta)
       this.updatePowerUpSpawning(rawDelta)
       this.checkPowerUpPickups()
+
+      this.lastHealthUpdateTime += rawDelta
+      if (this.lastHealthUpdateTime >= this.HEALTH_UPDATE_INTERVAL) {
+        this.lastHealthUpdateTime = 0
+        const hpA = this.guns.get('A')?.health ?? 0
+        const hpB = this.guns.get('B')?.health ?? 0
+        this.callbacks.onHealthChange(hpA, hpB)
+      }
     } else if (this.state === 'SLOMO') {
       const elapsed = timestamp - this.slomoStartTime
       this.timeScale = this.computeSlomoScale(elapsed)
@@ -422,6 +551,75 @@ export class Game {
     this.rafId = requestAnimationFrame(this.gameLoop)
   }
 
+  private applyBotStabilizer(gun: GunData): void {
+    const target = this.guns.get('A')
+    if (!target || target.health <= 0) return
+
+    const desiredAngle = Math.atan2(
+      target.body.position.y - gun.body.position.y,
+      target.body.position.x - gun.body.position.x,
+    )
+    const diff = this.shortestAngle(desiredAngle - gun.body.angle)
+    const stability = gun.model.stability * this.botProfile.stabilizingTorque
+    const sideX = -Math.sin(gun.body.angle) * GUN_HEIGHT * 0.5
+    const sideY = Math.cos(gun.body.angle) * GUN_HEIGHT * 0.5
+    Matter.Body.applyForce(gun.body, {
+      x: gun.body.position.x + sideX,
+      y: gun.body.position.y + sideY,
+    }, {
+      x: Math.cos(gun.body.angle) * Math.sign(diff) * stability,
+      y: Math.sin(gun.body.angle) * Math.sign(diff) * stability,
+    })
+  }
+
+  private keepGunInsideArena(gun: GunData): void {
+    const speed = Math.hypot(gun.body.velocity.x, gun.body.velocity.y)
+    const maxSpeed = 18
+    if (speed > maxSpeed) {
+      const scale = maxSpeed / speed
+      Matter.Body.setVelocity(gun.body, {
+        x: gun.body.velocity.x * scale,
+        y: gun.body.velocity.y * scale,
+      })
+    }
+
+    const maxAngular = 0.45
+    if (Math.abs(gun.body.angularVelocity) > maxAngular) {
+      Matter.Body.setAngularVelocity(gun.body, Math.sign(gun.body.angularVelocity) * maxAngular)
+    }
+
+    const margin = Math.max(gun.model.length, GUN_HEIGHT) / 2 + 3
+    const minX = WALL_THICKNESS + margin
+    const maxX = WALL_THICKNESS + this.arena.width - margin
+    const minY = WALL_THICKNESS + margin
+    const maxY = WALL_THICKNESS + this.arena.height - margin
+    const { x, y } = gun.body.position
+    const clampedX = Math.max(minX, Math.min(maxX, x))
+    const clampedY = Math.max(minY, Math.min(maxY, y))
+
+    if (clampedX !== x || clampedY !== y) {
+      Matter.Body.setPosition(gun.body, { x: clampedX, y: clampedY })
+      Matter.Body.setVelocity(gun.body, {
+        x: clampedX !== x ? -gun.body.velocity.x * 0.35 : gun.body.velocity.x,
+        y: clampedY !== y ? -gun.body.velocity.y * 0.35 : gun.body.velocity.y,
+      })
+    }
+  }
+
+  // New method to handle gun bounce off walls with restitution
+  private handleGunWallCollision(gunBody: Matter.Body): void {
+    const gunId = getGunIdFromBody(gunBody)
+    const gun = this.guns.get(gunId)
+    if (!gun) return
+    const restitution = 0.5
+    const vel = gunBody.velocity
+    Matter.Body.setVelocity(gunBody, { x: -vel.x * restitution, y: -vel.y * restitution })
+    // Apply a recoil impulse on impact
+    applyRecoilPhysics(gunBody, gun.model, this.settings.recoilMultiplier)
+    // Dampen angular velocity on bounce
+    Matter.Body.setAngularVelocity(gunBody, gunBody.angularVelocity * -restitution)
+  }
+
   private endBattle(): void {
     this.state = 'VICTORY'
     this.timeScale = 1
@@ -430,6 +628,19 @@ export class Game {
 
     const stats = this.statsSystem.getStats(this.winnerId)
     this.callbacks.onStatsUpdate?.(stats)
+
+    saveBattle({
+      date: new Date().toISOString(),
+      gunA: this.guns.get('A')?.model.name ?? this.selections.gunA,
+      gunB: this.guns.get('B')?.model.name ?? this.selections.gunB,
+      arena: this.arena.id,
+      winner: this.winnerId,
+      shotsFired: stats.gunA.shotsFired + stats.gunB.shotsFired,
+      hitsLanded: stats.gunA.hitsLanded + stats.gunB.hitsLanded,
+      damageDealt: stats.gunA.damageDealt + stats.gunB.damageDealt,
+      criticals: stats.gunA.criticals + stats.gunB.criticals,
+      playerWon: this.winnerId === 'A',
+    }).catch(() => {})
 
     const predicted = (window as any).__betPrediction
     if (predicted) {
@@ -504,16 +715,38 @@ export class Game {
     }
   }
 
-  private updateFiring(delta: number): void {
+  private updateAIFiring(delta: number): void {
+    const gunB = this.guns.get('B')
+    const gunA = this.guns.get('A')
+    if (!gunB || gunB.health <= 0 || !gunA) return
+
+    const dx = gunA.body.position.x - gunB.body.position.x
+    const dy = gunA.body.position.y - gunB.body.position.y
+    const targetAngle = Math.atan2(dy, dx)
+    const diff = Math.abs(this.shortestAngle(targetAngle - gunB.body.angle))
+    const tolerance = this.botProfile.aimTolerance * (1 - gunB.model.stability * 0.25)
+    const aimScore = Math.max(0, 1 - diff / Math.PI)
+    const stableEnough = this.aiRecoilState.kick < 0.55 && Math.abs(gunB.body.angularVelocity) < 0.24
+    const impatientShot = Math.random() < this.botProfile.mistakeChance * (delta / 1000)
+    const confidentShot = diff < tolerance && stableEnough && Math.random() < this.botProfile.triggerPatience
+
     this.nextFireTimer -= delta
-    if (this.nextFireTimer <= 0) {
-      const aliveGuns: string[] = []
-      for (const [id, gun] of this.guns) if (gun.health > 0) aliveGuns.push(id)
-      if (aliveGuns.length <= 1) return
-      const shooter = this.randomSystem.pickShooter(aliveGuns)
-      this.fireGun(shooter)
-      const gun = this.guns.get(shooter)
-      if (gun) this.nextFireTimer = this.randomSystem.nextFireDelay(gun.model.fireCooldownMin, gun.model.fireCooldownMax)
+    if (this.nextFireTimer <= 0 && (confidentShot || impatientShot || aimScore > 0.96)) {
+      this.fireGun('B')
+      this.nextFireTimer = this.randomSystem.nextFireDelay(gunB.model.fireCooldownMin, gunB.model.fireCooldownMax)
+    }
+  }
+
+  private shortestAngle(angle: number): number {
+    let result = angle
+    while (result > Math.PI) result -= Math.PI * 2
+    while (result < -Math.PI) result += Math.PI * 2
+    return result
+  }
+
+  private updatePlayerFiring(delta: number): void {
+    if (this.playerFireTimer > 0) {
+      this.playerFireTimer -= delta
     }
   }
 
@@ -545,7 +778,8 @@ export class Game {
   }
 
   private updateShake(): void {
-    if (this.shakeIntensity > 0) this.shakeIntensity = Math.max(0, this.shakeIntensity - 0.5)
+    this.shakeIntensity *= 0.82
+    if (this.shakeIntensity < 0.05) this.shakeIntensity = 0
   }
 
   private updateHitFlashes(): void {
@@ -578,6 +812,21 @@ export class Game {
     }
   }
 
+  private spawnCasing(x: number, y: number, angle: number): void {
+    for (let i = 0; i < 1; i++) {
+      if (this.particles.length >= MAX_PARTICLES) break
+      const perpAngle = angle + Math.PI / 2 + randRange(-0.3, 0.3)
+      this.particles.push({
+        x, y,
+        vx: Math.cos(perpAngle) * randRange(2, 5) - Math.cos(angle) * 2,
+        vy: Math.sin(perpAngle) * randRange(2, 5) - Math.sin(angle) * 2,
+        life: 40, maxLife: 40, color: '#ccaa44', size: 3, alpha: 1,
+        type: 'casing',
+        rotation: angle, rotationSpeed: randRange(-0.3, 0.3),
+      })
+    }
+  }
+
   private spawnDust(x: number, y: number): void {
     for (let i = 0; i < 4; i++) {
       if (this.particles.length >= MAX_PARTICLES) break
@@ -603,6 +852,7 @@ export class Game {
   reset(): void {
     this.cleanup()
     this.state = 'MENU'
+    this.playerFireTimer = 0
     this.timeScale = 1
     this.callbacks.onStateChange('MENU')
     this.callbacks.onHealthChange(100, 100)
@@ -627,6 +877,7 @@ export class Game {
 
   destroy(): void {
     window.removeEventListener('keydown', this.boundKeyHandler)
+    this.canvas.removeEventListener('pointerdown', this.boundPointerDown)
     cancelAnimationFrame(this.rafId)
     Matter.Engine.clear(this.engine)
   }

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 import { Game } from '../game/Game'
-import { GameCallbacks, GameState, TournamentState } from '../game/types'
+import { BotProfile, GameCallbacks, GameState, TournamentState } from '../game/types'
 import { ARENAS } from '../game/arenas'
 import { WALL_THICKNESS } from '../game/constants'
 
@@ -11,6 +11,7 @@ interface GameCanvasProps {
   onWinner: (gunId: string) => void
   onStateChange: (state: GameState) => void
   onGameReady: (game: Game) => void
+  onBotProfile?: (profile: BotProfile) => void
   onStatsUpdate?: (stats: any) => void
   onBetResult?: (correct: boolean, streak: number) => void
   onTournamentUpdate?: (state: TournamentState) => void
@@ -18,7 +19,7 @@ interface GameCanvasProps {
 
 export function GameCanvas({
   onHealthChange, onWinner, onStateChange, onGameReady,
-  onStatsUpdate, onBetResult, onTournamentUpdate,
+  onBotProfile, onStatsUpdate, onBetResult, onTournamentUpdate,
 }: GameCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const gameRef = useRef<Game | null>(null)
@@ -31,6 +32,7 @@ export function GameCanvas({
       onHealthChange,
       onWinner,
       onStateChange,
+      onBotProfile: onBotProfile || (() => {}),
       onStatsUpdate: onStatsUpdate || (() => {}),
       onBetResult: onBetResult || (() => {}),
       onTournamentUpdate: onTournamentUpdate || (() => {}),
@@ -53,6 +55,7 @@ export function GameCanvas({
       height={ARENAS.standard.height + WALL_THICKNESS * 2}
       style={{
         display: 'block', margin: '0 auto',
+        maxWidth: '100%', height: 'auto', touchAction: 'none',
         borderRadius: '8px', border: '2px solid #444',
       }}
     />

@@ -102,17 +102,75 @@ export class RenderSystem {
   drawGun(gun: GunData): void {
     if (gun.health <= 0) return
     const ctx = this.ctx, body = gun.body, len = gun.model.length
+    const height = GUN_HEIGHT
+    const muzzle = len / 2
+    const rear = -len / 2
     ctx.save()
     ctx.translate(body.position.x, body.position.y)
     ctx.rotate(body.angle)
+
+    ctx.shadowColor = gun.color
+    ctx.shadowBlur = 12
     ctx.fillStyle = gun.color
-    ctx.fillRect(-len / 2, -GUN_HEIGHT / 2, len, GUN_HEIGHT)
-    ctx.strokeStyle = 'rgba(255,255,255,0.3)'
+    this.roundRect(rear + len * 0.22, -height * 0.34, len * 0.78, height * 0.42, 3)
+    ctx.fill()
+
+    ctx.shadowBlur = 0
+    ctx.fillStyle = this.lighten(gun.color, 24)
+    this.roundRect(muzzle - 10, -height * 0.22, 12, height * 0.18, 2)
+    ctx.fill()
+
+    ctx.fillStyle = gun.color
+    this.roundRect(rear + len * 0.02, -height * 0.48, len * 0.34, height * 0.52, 3)
+    ctx.fill()
+
+    ctx.beginPath()
+    ctx.moveTo(rear + len * 0.04, height * 0.08)
+    ctx.lineTo(rear + len * 0.22, height * 0.08)
+    ctx.lineTo(rear + len * 0.08, height * 0.95)
+    ctx.lineTo(rear - len * 0.08, height * 0.95)
+    ctx.closePath()
+    ctx.fill()
+
+    ctx.strokeStyle = this.lighten(gun.color, 38)
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.moveTo(rear + len * 0.18, height * 0.04)
+    ctx.quadraticCurveTo(rear + len * 0.28, height * 0.48, rear + len * 0.42, height * 0.18)
+    ctx.stroke()
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.38)'
     ctx.lineWidth = 1
-    ctx.strokeRect(-len / 2, -GUN_HEIGHT / 2, len, GUN_HEIGHT)
-    ctx.fillStyle = 'rgba(255,255,255,0.5)'
-    ctx.fillRect(len / 2 - 8, -3, 8, 6)
+    ctx.strokeRect(rear + len * 0.22, -height * 0.34, len * 0.78, height * 0.42)
+
+    ctx.fillStyle = '#f7fbff'
+    ctx.beginPath()
+    ctx.arc(muzzle + 7, -height * 0.12, 3, 0, Math.PI * 2)
+    ctx.fill()
     ctx.restore()
+  }
+
+  private roundRect(x: number, y: number, w: number, h: number, r: number): void {
+    const ctx = this.ctx
+    const radius = Math.min(r, Math.abs(w) / 2, Math.abs(h) / 2)
+    ctx.beginPath()
+    ctx.moveTo(x + radius, y)
+    ctx.lineTo(x + w - radius, y)
+    ctx.quadraticCurveTo(x + w, y, x + w, y + radius)
+    ctx.lineTo(x + w, y + h - radius)
+    ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h)
+    ctx.lineTo(x + radius, y + h)
+    ctx.quadraticCurveTo(x, y + h, x, y + h - radius)
+    ctx.lineTo(x, y + radius)
+    ctx.quadraticCurveTo(x, y, x + radius, y)
+  }
+
+  private lighten(hex: string, amount: number): string {
+    const num = parseInt(hex.replace('#', ''), 16)
+    const r = Math.min(255, (num >> 16) + amount)
+    const g = Math.min(255, ((num >> 8) & 0xFF) + amount)
+    const b = Math.min(255, (num & 0xFF) + amount)
+    return `rgb(${r},${g},${b})`
   }
 
   drawPowerUpIndicators(gun: GunData): void {
@@ -136,10 +194,27 @@ export class RenderSystem {
 
   drawBullet(bullet: BulletData, color: string): void {
     const ctx = this.ctx, x = bullet.body.position.x, y = bullet.body.position.y
-    ctx.fillStyle = bullet.critical ? '#ff44ff' : color
+    const trailColor = bullet.critical ? '#ff44ff' : color
+
+    if (bullet.prevX !== undefined && bullet.prevY !== undefined) {
+      ctx.beginPath()
+      ctx.strokeStyle = trailColor
+      ctx.globalAlpha = 0.5
+      ctx.lineWidth = BULLET_RADIUS * 1.5
+      ctx.lineCap = 'round'
+      ctx.moveTo(bullet.prevX, bullet.prevY)
+      ctx.lineTo(x, y)
+      ctx.stroke()
+      ctx.globalAlpha = 1
+    }
+
+    ctx.fillStyle = trailColor
     ctx.beginPath()
     ctx.arc(x, y, BULLET_RADIUS, 0, Math.PI * 2)
     ctx.fill()
+
+    bullet.prevX = x
+    bullet.prevY = y
   }
 
   drawParticles(particles: Particle[]): void {
@@ -152,6 +227,14 @@ export class RenderSystem {
         ctx.beginPath()
         ctx.arc(p.x, p.y, size, 0, Math.PI * 2)
         ctx.fill()
+      } else if (p.type === 'casing') {
+        ctx.save()
+        ctx.translate(p.x, p.y)
+        ctx.rotate(p.rotation ?? 0)
+        ctx.fillStyle = p.color
+        ctx.fillRect(-4, -1.5, 8, 3)
+        ctx.restore()
+        if (p.rotation !== undefined) p.rotation += (p.rotationSpeed ?? 0)
       } else {
         ctx.fillRect(p.x - size / 2, p.y - size / 2, size, size)
       }

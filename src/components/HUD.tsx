@@ -1,6 +1,7 @@
 'use client'
 
 import { GameState } from '../game/types'
+import { GunIcon } from './GunIcon'
 
 interface HUDProps {
   gunAHealth: number
@@ -9,6 +10,7 @@ interface HUDProps {
   gunBModel: string
   winner: string | null
   state: GameState
+  botLabel?: string
   betStreak?: number
   betResult?: { correct: boolean; streak: number } | null
   tournamentScore?: { a: number; b: number } | null
@@ -18,7 +20,7 @@ interface HUDProps {
 
 export function HUD({
   gunAHealth, gunBHealth, gunAModel, gunBModel,
-  winner, state, betStreak = 0, betResult,
+  winner, state, botLabel, betStreak = 0, betResult,
   tournamentScore, soundEnabled = true, onToggleSound,
 }: HUDProps) {
   return (
@@ -28,10 +30,11 @@ export function HUD({
       fontFamily: 'monospace', fontSize: '15px',
       width: '100%', maxWidth: '860px', position: 'relative',
     }}>
-      <GunBlock label="Gun A" model={gunAModel} health={gunAHealth} color="#4488ff" align="right" />
+      <GunBlock label="YOU" model={gunAModel} health={gunAHealth} color="#4488ff" align="right" />
 
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px', minWidth: '130px' }}>
         {state === 'BATTLE' && <span style={{ color: '#ffff88', fontSize: '14px' }}>⚔ BATTLE</span>}
+        {botLabel && state === 'BATTLE' && <span style={{ color: '#aaa', fontSize: '10px' }}>{botLabel}</span>}
         {state === 'SLOMO' && <span style={{ color: '#ffdd44', fontSize: '16px', fontWeight: 'bold' }}>K.O.</span>}
         {state === 'PAUSED' && <span style={{ color: '#88bbff', fontSize: '14px', fontWeight: 'bold' }}>⏸ PAUSED</span>}
         {winner && <span style={{ color: '#ffdd44', fontWeight: 'bold', fontSize: '13px' }}>{winner} Wins!</span>}
@@ -50,7 +53,7 @@ export function HUD({
         )}
       </div>
 
-      <GunBlock label="Gun B" model={gunBModel} health={gunBHealth} color="#ff4444" align="left" />
+      <GunBlock label="ENEMY" model={gunBModel} health={gunBHealth} color="#ff4444" align="left" />
 
       {onToggleSound && (
         <button
@@ -79,7 +82,10 @@ function GunBlock({ label, model, health, color, align }: {
       flexDirection: align === 'right' ? 'row' : 'row-reverse',
     }}>
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: align === 'right' ? 'flex-end' : 'flex-start', minWidth: '65px' }}>
-        <span style={{ color, fontWeight: 'bold', fontSize: '13px' }}>{label}</span>
+        <span style={{ color, fontWeight: 'bold', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <GunIcon color={align === 'right' ? '#4488ff' : '#ff4444'} flipped={align === 'left'} size={22} />
+          {label}
+        </span>
         {model && <span style={{ color: '#888', fontSize: '10px' }}>{model}</span>}
       </div>
       <div style={{ width: '80px', height: '12px', backgroundColor: '#222', borderRadius: '2px', overflow: 'hidden', border: '1px solid #444' }}>
