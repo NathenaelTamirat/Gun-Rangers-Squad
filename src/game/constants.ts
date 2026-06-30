@@ -1,12 +1,18 @@
 import { GunModelConfig } from './types'
 
-export const WALL_THICKNESS = 30
+export const WALL_THICKNESS = 45
 
 export const GUN_HEIGHT = 22
 export const GUN_HEALTH = 100
 export const GUN_RESTITUTION = 0.75   // wall restitution — snappy bounce
 export const GUN_FRICTION = 0.1       // low wall friction so guns slide on bounce
-export const GUN_ANGULAR_DAMPING = 0.04  // soft — lets spin last longer
+export const GUN_ANGULAR_DAMPING = 0.025  // soft — lets spin last longer
+
+export const MAX_RECOIL_SPEED_DELTA = 12   // px/frame a single shot can add
+export const MAX_GUN_TOTAL_SPEED = 22      // absolute cap right after firing
+export const MAX_GUN_LINEAR_SPEED = 28     // absolute cap, enforced every frame
+export const MAX_GUN_ANGULAR_SPEED = 1.2   // rad/frame, enforced every frame
+export const MAX_RECOIL_ANGULAR_KICK = 0.25 // rad/frame added per shot
 
 export const BULLET_RADIUS = 3
 export const BULLET_MASS = 0.1

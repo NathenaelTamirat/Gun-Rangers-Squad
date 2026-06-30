@@ -33,7 +33,7 @@ export const ARENAS: Record<string, ArenaConfig> = {
 
 export const DEFAULT_SETTINGS: PhysicsSettings = {
   gravityX: 0,
-  gravityY: 0,
+  gravityY: 0.5,
   recoilMultiplier: 1,
   restitutionMultiplier: 1,
   bulletSpeedMultiplier: 1,

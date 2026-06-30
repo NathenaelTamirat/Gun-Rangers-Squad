@@ -29,8 +29,6 @@ export function createGunBody(x: number, y: number, angle: number, gunData: GunD
 
   const body = Matter.Bodies.rectangle(x, y, len, GUN_HEIGHT, opts)
 
-  ;(body as any).angularDamping = GUN_ANGULAR_DAMPING
-
   return body
 }
 

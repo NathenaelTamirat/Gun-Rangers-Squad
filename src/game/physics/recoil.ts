@@ -1,5 +1,10 @@
 import Matter from 'matter-js'
 import { GunModelConfig } from '../types'
+import {
+  MAX_RECOIL_SPEED_DELTA,
+  MAX_GUN_TOTAL_SPEED,
+  MAX_RECOIL_ANGULAR_KICK,
+} from '../constants'
 
 export function gaussianRandom(mean: number, stdDev: number): number {
   const u1 = Math.random(), u2 = Math.random()
@@ -20,9 +25,13 @@ export function createRecoilState(): RecoilState {
 }
 
 /**
- * Applies recoil as a pure opposite-direction impulse at the gun's center of mass.
- * Direction = exactly opposite to the gun's angle (Newton's 3rd law).
- * No torque is added here — spin comes naturally from physics.
+ * Applies recoil as a direct velocity kick at the gun's center of mass.
+ *
+ * Rules:
+ *  - Direction: exactly OPPOSITE the gun's facing (Newton's 3rd law, always).
+ *  - Magnitude: capped at MAX_RECOIL_SPEED_DELTA so a single shot can never exceed it.
+ *  - Angular: small controlled spin, capped at MAX_RECOIL_ANGULAR_KICK.
+ *  - Recovery: gun slows naturally via frictionAir — no sudden stops.
  */
 export function applyRecoilPhysics(
   gunBody: Matter.Body,
@@ -30,16 +39,31 @@ export function applyRecoilPhysics(
   recoilMul: number,
 ): void {
   const angle = gunBody.angle
-  // Net impulse scaled by gun mass so heavier guns kick less
-  const stabilityMul = 1 - model.stability * 0.5 // stability reduces kick, but doesn't eliminate it
-  const impulse = gaussianRandom(1, 0.08) * model.recoilForce * recoilMul * stabilityMul
 
-  // Straight back — exactly opposite of the barrel direction
-  const forceX = -Math.cos(angle) * impulse
-  const forceY = -Math.sin(angle) * impulse
+  // stability reduces kick (0.3 floor so even high-stability guns feel it)
+  const stabilityMul = Math.max(0.3, 1 - model.stability * 0.6)
+  const rawImpulse    = model.recoilForce * recoilMul * stabilityMul
 
-  // Apply at center of mass so it's a pure linear kick, no torque
-  Matter.Body.applyForce(gunBody, gunBody.position, { x: forceX, y: forceY })
+  // Hard cap: single shot can add at most MAX_RECOIL_SPEED_DELTA to velocity
+  const clampedImpulse = Math.min(rawImpulse, MAX_RECOIL_SPEED_DELTA)
+
+  // Add velocity directly opposite the barrel — pure linear kick
+  const newVx = gunBody.velocity.x + (-Math.cos(angle) * clampedImpulse)
+  const newVy = gunBody.velocity.y + (-Math.sin(angle) * clampedImpulse)
+
+  // Also cap the resulting total speed so rapid fire can't stack infinitely
+  const resultSpeed = Math.hypot(newVx, newVy)
+  if (resultSpeed > MAX_GUN_TOTAL_SPEED) {
+    const scale = MAX_GUN_TOTAL_SPEED / resultSpeed
+    Matter.Body.setVelocity(gunBody, { x: newVx * scale, y: newVy * scale })
+  } else {
+    Matter.Body.setVelocity(gunBody, { x: newVx, y: newVy })
+  }
+
+  // Small angular kick — controlled spin that feels alive, not chaotic
+  const rawSpin = model.recoilAngularKick * recoilMul * gaussianRandom(1, 0.15)
+  const clampedSpin = Math.min(Math.abs(rawSpin), MAX_RECOIL_ANGULAR_KICK) * Math.sign(rawSpin)
+  Matter.Body.setAngularVelocity(gunBody, gunBody.angularVelocity + clampedSpin)
 }
 
 export function applyRecoilPlayer(
@@ -52,13 +76,13 @@ export function applyRecoilPlayer(
   const accumulationDecay = Math.exp(-timeSinceLastShot / 400)
   state.accumulatedSpread = Math.min(1, state.accumulatedSpread * accumulationDecay + 0.2)
 
-  const stabilityMul = 1 - model.stability * 0.5
-  const baseKick = model.recoilForce * recoilMul * stabilityMul * 20
-  const kickAmount = gaussianRandom(baseKick, baseKick * 0.25) * (1 + state.accumulatedSpread * 0.4)
+  const stabilityMul = Math.max(0.3, 1 - model.stability * 0.6)
+  const baseKick  = model.recoilForce * recoilMul * stabilityMul * 20
+  const kickAmount = gaussianRandom(baseKick, baseKick * 0.2) * (1 + state.accumulatedSpread * 0.3)
 
   state.kick = Math.min(state.kick + kickAmount, 0.8)
   state.recoveryVelocity = state.kick * 0.06
-  state.rotation = gaussianRandom(0, model.recoilAngularKick * recoilMul * 40)
+  state.rotation = gaussianRandom(0, model.recoilAngularKick * recoilMul * 30)
 
   state.lastShotTime = now
 }
@@ -84,7 +108,7 @@ export function getDynamicSpread(
   accumulatedSpread: number,
   gunVelocity: number,
 ): number {
-  const recoilPenalty = accumulatedSpread * model.spreadGrowth
+  const recoilPenalty   = accumulatedSpread * model.spreadGrowth
   const movementPenalty = Math.min(gunVelocity * 0.001, 0.05)
   return model.bulletSpread + recoilPenalty + movementPenalty
 }
@@ -95,18 +119,4 @@ export function isStableEnough(
 ): boolean {
   const threshold = 0.15 * (1 - model.stability * 0.5)
   return state.kick < threshold && Math.abs(state.rotation) < threshold * 0.5
-}
-
-export function applyRecoilToPosition(
-  gunBody: Matter.Body,
-  state: { kick: number },
-): void {
-  if (state.kick > 0.01) {
-    const angle = gunBody.angle
-    const push = state.kick * 0.05
-    Matter.Body.applyForce(gunBody, gunBody.position, {
-      x: -Math.cos(angle) * push * gunBody.mass,
-      y: -Math.sin(angle) * push * gunBody.mass,
-    })
-  }
 }
