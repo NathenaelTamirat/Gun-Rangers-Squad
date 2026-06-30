@@ -1,6 +1,5 @@
 import Matter from 'matter-js'
 import { GunModelConfig } from '../types'
-import { getBarrelTip } from '../entities/Gun'
 
 export function gaussianRandom(mean: number, stdDev: number): number {
   const u1 = Math.random(), u2 = Math.random()
@@ -20,26 +19,27 @@ export function createRecoilState(): RecoilState {
   return { kick: 0, rotation: 0, recoveryVelocity: 0, accumulatedSpread: 0, lastShotTime: 0 }
 }
 
+/**
+ * Applies recoil as a pure opposite-direction impulse at the gun's center of mass.
+ * Direction = exactly opposite to the gun's angle (Newton's 3rd law).
+ * No torque is added here — spin comes naturally from physics.
+ */
 export function applyRecoilPhysics(
   gunBody: Matter.Body,
   model: GunModelConfig,
   recoilMul: number,
 ): void {
   const angle = gunBody.angle
-  const stabilityMul = 1 - model.stability
-  const impulse = gaussianRandom(1, 0.1) * model.recoilForce * recoilMul * stabilityMul * gunBody.mass
+  // Net impulse scaled by gun mass so heavier guns kick less
+  const stabilityMul = 1 - model.stability * 0.5 // stability reduces kick, but doesn't eliminate it
+  const impulse = gaussianRandom(1, 0.08) * model.recoilForce * recoilMul * stabilityMul
 
+  // Straight back — exactly opposite of the barrel direction
   const forceX = -Math.cos(angle) * impulse
   const forceY = -Math.sin(angle) * impulse
 
-  const barrelTip = getBarrelTip(gunBody, model.length)
-  Matter.Body.applyForce(gunBody, barrelTip, { x: forceX, y: forceY })
-
-  const microKick = gaussianRandom(0, 0.008)
-  Matter.Body.setAngularVelocity(
-    gunBody,
-    gunBody.angularVelocity + model.recoilAngularKick * stabilityMul * recoilMul + microKick,
-  )
+  // Apply at center of mass so it's a pure linear kick, no torque
+  Matter.Body.applyForce(gunBody, gunBody.position, { x: forceX, y: forceY })
 }
 
 export function applyRecoilPlayer(
@@ -52,7 +52,7 @@ export function applyRecoilPlayer(
   const accumulationDecay = Math.exp(-timeSinceLastShot / 400)
   state.accumulatedSpread = Math.min(1, state.accumulatedSpread * accumulationDecay + 0.2)
 
-  const stabilityMul = 1 - model.stability
+  const stabilityMul = 1 - model.stability * 0.5
   const baseKick = model.recoilForce * recoilMul * stabilityMul * 20
   const kickAmount = gaussianRandom(baseKick, baseKick * 0.25) * (1 + state.accumulatedSpread * 0.4)
 
@@ -67,9 +67,9 @@ export function decayPlayerRecoil(state: RecoilState, delta: number): void {
   if (state.kick > 0) {
     state.kick -= state.recoveryVelocity
     if (state.kick < 0) state.kick = 0
-    state.recoveryVelocity *= 0.88
+    state.recoveryVelocity *= 0.90
   }
-  state.rotation *= 0.88
+  state.rotation *= 0.90
 }
 
 export function decayAIRecoil(state: { kick: number; rotation: number }, delta: number): void {

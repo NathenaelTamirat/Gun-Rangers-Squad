@@ -4,9 +4,9 @@ export const WALL_THICKNESS = 30
 
 export const GUN_HEIGHT = 22
 export const GUN_HEALTH = 100
-export const GUN_RESTITUTION = 0.4
-export const GUN_FRICTION = 0.6
-export const GUN_ANGULAR_DAMPING = 0.08
+export const GUN_RESTITUTION = 0.75   // wall restitution — snappy bounce
+export const GUN_FRICTION = 0.1       // low wall friction so guns slide on bounce
+export const GUN_ANGULAR_DAMPING = 0.04  // soft — lets spin last longer
 
 export const BULLET_RADIUS = 3
 export const BULLET_MASS = 0.1
@@ -15,7 +15,7 @@ export const RECOIL_VARIANCE = 0.15
 export const MIN_SPAWN_DISTANCE = 200
 
 export const MAX_BULLETS = 100
-export const MAX_PARTICLES = 600
+export const MAX_PARTICLES = 800
 export const MAX_DAMAGE_NUMBERS = 30
 
 export const CRITICAL_CHANCE = 0.1
@@ -52,6 +52,7 @@ export const COLORS = {
   CRITICAL: '#ff44ff',
   POWERUP_SHIELD: '#44ddff',
   POWERUP_DAMAGE: '#ff8844',
+  WALL_IMPACT: '#ffcc66',
 }
 
 export const GUN_MODELS: Record<string, GunModelConfig> = {
@@ -61,8 +62,8 @@ export const GUN_MODELS: Record<string, GunModelConfig> = {
     damage: 10,
     fireCooldownMin: 300,
     fireCooldownMax: 700,
-    recoilForce: 0.075,
-    recoilAngularKick: 0.014,
+    recoilForce: 0.0048,       // stronger — clearly felt
+    recoilAngularKick: 0.08,
     bulletSpeed: 14,
     bulletSpread: 0.03,
     bulletsPerShot: 1,
@@ -70,20 +71,20 @@ export const GUN_MODELS: Record<string, GunModelConfig> = {
     mass: 2.5,
     color: '#4488ff',
     bulletColor: '#88bbff',
-    stability: 0.6,
+    stability: 0.5,
     recoverySpeed: 0.92,
     spreadGrowth: 0.015,
-    frictionAir: 0.02,
-    restitution: 0.6,
+    frictionAir: 0.004,        // low air friction — gun slides naturally
+    restitution: 0.75,
   },
   rifle: {
     name: 'Rifle',
-    summary: 'Fast and accurate, with long-body torque and slower shots.',
+    summary: 'Fast and accurate, with strong kick and slower shots.',
     damage: 18,
     fireCooldownMin: 500,
     fireCooldownMax: 1100,
-    recoilForce: 0.105,
-    recoilAngularKick: 0.012,
+    recoilForce: 0.007,        // heavy kick
+    recoilAngularKick: 0.06,
     bulletSpeed: 22,
     bulletSpread: 0.01,
     bulletsPerShot: 1,
@@ -91,21 +92,21 @@ export const GUN_MODELS: Record<string, GunModelConfig> = {
     mass: 4,
     color: '#44dd88',
     bulletColor: '#88ffbb',
-    stability: 0.85,
+    stability: 0.7,
     recoverySpeed: 0.95,
     spreadGrowth: 0.008,
-    frictionAir: 0.008,
-    restitution: 0.3,
+    frictionAir: 0.002,
+    restitution: 0.65,
     customInertia: 2600,
   },
   shotgun: {
     name: 'Shotgun',
-    summary: 'Wide pellet cone and heavy recoil that can violently reposition the gun.',
+    summary: 'Wide pellet cone and brutal recoil — launches the gun backward.',
     damage: 6,
     fireCooldownMin: 800,
     fireCooldownMax: 1500,
-    recoilForce: 0.18,
-    recoilAngularKick: 0.036,
+    recoilForce: 0.014,        // violent backward launch
+    recoilAngularKick: 0.18,
     bulletSpeed: 10,
     bulletSpread: 0.18,
     bulletsPerShot: 5,
@@ -113,10 +114,32 @@ export const GUN_MODELS: Record<string, GunModelConfig> = {
     mass: 3.5,
     color: '#ff8844',
     bulletColor: '#ffbb88',
-    stability: 0.45,
+    stability: 0.2,
     recoverySpeed: 0.85,
     spreadGrowth: 0.04,
-    frictionAir: 0.05,
-    restitution: 0.2,
+    frictionAir: 0.005,
+    restitution: 0.55,
+  },
+  sniper: {
+    name: 'Sniper',
+    summary: 'One-shot power with extreme recoil that slams the gun backward.',
+    damage: 35,
+    fireCooldownMin: 1200,
+    fireCooldownMax: 2000,
+    recoilForce: 0.022,        // extreme — gun flies backward on shot
+    recoilAngularKick: 0.04,
+    bulletSpeed: 30,
+    bulletSpread: 0.005,
+    bulletsPerShot: 1,
+    length: 80,
+    mass: 5,
+    color: '#bb44ff',
+    bulletColor: '#dd88ff',
+    stability: 0.85,
+    recoverySpeed: 0.98,
+    spreadGrowth: 0.004,
+    frictionAir: 0.001,
+    restitution: 0.5,
+    customInertia: 3500,
   },
 }

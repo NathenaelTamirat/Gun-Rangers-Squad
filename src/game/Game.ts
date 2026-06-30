@@ -103,6 +103,10 @@ export class Game {
   private aiRecoilState: RecoilState = createRecoilState()
   private botProfile: BotProfile = BOT_PROFILES[1]
   private botDifficultyLevel: number = 3
+  // Tracks the frame index when a gun last bounced off a wall via physics collision.
+  // Used so keepGunInsideArena does NOT also invert velocity that same frame.
+  private lastWallBounceFrame: Map<string, number> = new Map()
+  private frameIndex: number = 0
   // Adjust bot difficulty (1-5) by scaling profile parameters and storing level
   public setBotDifficulty(level: number): void {
     const clamped = Math.max(1, Math.min(5, level))
@@ -218,8 +222,9 @@ export class Game {
     else if (isBulletB && isGunA) this.handleBulletHitGun(bodyB, bodyA)
     else if (isBulletA && bodyB.label === 'wall') this.handleBulletHitWall(bodyA)
     else if (isBulletB && bodyA.label === 'wall') this.handleBulletHitWall(bodyB)
-    else if (isGunA && bodyB.label === 'wall') this.handleGunWallCollision(bodyA)
-    else if (isGunB && bodyA.label === 'wall') this.handleGunWallCollision(bodyB)
+    else if (isGunA && bodyB.label === 'wall') this.handleGunWallCollision(bodyA, bodyB)
+    else if (isGunB && bodyA.label === 'wall') this.handleGunWallCollision(bodyB, bodyA)
+    else if (isGunA && isGunB) this.handleGunGunCollision(bodyA, bodyB)
     else if (isGunA && isPUpB) this.handlePowerUpPickup(bodyA, bodyB)
     else if (isGunB && isPUpA) this.handlePowerUpPickup(bodyB, bodyA)
   }
@@ -469,6 +474,7 @@ export class Game {
   private gameLoop = (timestamp: number): void => {
     const rawDelta = Math.min(timestamp - this.lastTimestamp, 50)
     this.lastTimestamp = timestamp
+    this.frameIndex++
 
     if (this.state === 'BATTLE') {
       Matter.Engine.update(this.engine, rawDelta)
@@ -476,7 +482,8 @@ export class Game {
       decayAIRecoil(this.aiRecoilState, rawDelta)
       for (const [id, gun] of this.guns) {
         if (gun.health > 0) {
-          Matter.Body.setAngularVelocity(gun.body, gun.body.angularVelocity * 0.88)
+          // Soft angular damping — lets spin from recoil persist naturally
+          Matter.Body.setAngularVelocity(gun.body, gun.body.angularVelocity * 0.975)
           if (id === 'B') this.applyBotStabilizer(gun)
           this.keepGunInsideArena(gun)
         }
@@ -573,8 +580,9 @@ export class Game {
   }
 
   private keepGunInsideArena(gun: GunData): void {
+    // Cap speed to prevent physics instability (but allow higher values for recoil feel)
     const speed = Math.hypot(gun.body.velocity.x, gun.body.velocity.y)
-    const maxSpeed = 18
+    const maxSpeed = 35
     if (speed > maxSpeed) {
       const scale = maxSpeed / speed
       Matter.Body.setVelocity(gun.body, {
@@ -583,7 +591,7 @@ export class Game {
       })
     }
 
-    const maxAngular = 0.45
+    const maxAngular = 1.2
     if (Math.abs(gun.body.angularVelocity) > maxAngular) {
       Matter.Body.setAngularVelocity(gun.body, Math.sign(gun.body.angularVelocity) * maxAngular)
     }
@@ -598,26 +606,79 @@ export class Game {
     const clampedY = Math.max(minY, Math.min(maxY, y))
 
     if (clampedX !== x || clampedY !== y) {
+      // Position-correct only. If a physics collision bounce already ran this frame,
+      // don't invert velocity again (would fight the bounce).
       Matter.Body.setPosition(gun.body, { x: clampedX, y: clampedY })
-      Matter.Body.setVelocity(gun.body, {
-        x: clampedX !== x ? -gun.body.velocity.x * 0.35 : gun.body.velocity.x,
-        y: clampedY !== y ? -gun.body.velocity.y * 0.35 : gun.body.velocity.y,
-      })
+      const lastBounce = this.lastWallBounceFrame.get(gun.id) ?? -999
+      if (this.frameIndex - lastBounce > 2) {
+        // Fallback soft bounce — only if physics collision didn't already handle it
+        Matter.Body.setVelocity(gun.body, {
+          x: clampedX !== x ? -gun.body.velocity.x * 0.5 : gun.body.velocity.x,
+          y: clampedY !== y ? -gun.body.velocity.y * 0.5 : gun.body.velocity.y,
+        })
+      }
     }
   }
 
-  // New method to handle gun bounce off walls with restitution
-  private handleGunWallCollision(gunBody: Matter.Body): void {
+  /**
+   * Gun hits a wall: reflect the velocity on the correct axis (determined by which wall was hit),
+   * add spin, impact sparks, and a screen shake.
+   * This is the ONLY place velocity is reflected — keepGunInsideArena will skip its own reflection.
+   */
+  private handleGunWallCollision(gunBody: Matter.Body, wallBody: Matter.Body): void {
     const gunId = getGunIdFromBody(gunBody)
     const gun = this.guns.get(gunId)
     if (!gun) return
-    const restitution = 0.8
+
+    // Record this frame so keepGunInsideArena doesn't double-bounce
+    this.lastWallBounceFrame.set(gun.id, this.frameIndex)
+
+    const restitution = 0.78 * this.settings.restitutionMultiplier
     const vel = gunBody.velocity
-    Matter.Body.setVelocity(gunBody, { x: -vel.x * restitution, y: -vel.y * restitution })
-    // Apply a stronger recoil impulse on impact
-    applyRecoilPhysics(gunBody, gun.model, this.settings.recoilMultiplier)
-    // Dampen angular velocity on bounce (more natural)
-    Matter.Body.setAngularVelocity(gunBody, gunBody.angularVelocity * -restitution)
+    const pos = gunBody.position
+    const aw = this.arena.width, ah = this.arena.height
+
+    // Determine which wall was hit by finding the gun's nearest wall axis
+    const distLeft   = pos.x - WALL_THICKNESS
+    const distRight  = WALL_THICKNESS + aw - pos.x
+    const distTop    = pos.y - WALL_THICKNESS
+    const distBottom = WALL_THICKNESS + ah - pos.y
+    const minDist = Math.min(distLeft, distRight, distTop, distBottom)
+
+    let newVx = vel.x
+    let newVy = vel.y
+
+    if (minDist === distLeft || minDist === distRight) {
+      // Hit left or right wall — invert X velocity
+      newVx = -vel.x * restitution
+    } else {
+      // Hit top or bottom wall — invert Y velocity
+      newVy = -vel.y * restitution
+    }
+
+    Matter.Body.setVelocity(gunBody, { x: newVx, y: newVy })
+
+    // Small spin on impact for natural feel
+    const spinKick = (Math.random() - 0.5) * 0.3
+    Matter.Body.setAngularVelocity(gunBody, gunBody.angularVelocity * 0.6 + spinKick)
+
+    // Visual: wall-impact sparks and shake
+    const impactX = Math.min(WALL_THICKNESS + aw, Math.max(WALL_THICKNESS, pos.x))
+    const impactY = Math.min(WALL_THICKNESS + ah, Math.max(WALL_THICKNESS, pos.y))
+    this.spawnWallImpactSparks(impactX, impactY)
+    this.shakeIntensity = Math.min(this.shakeIntensity + 4, 14)
+  }
+
+  /** Billiard-style collision between two guns: exchange momentum + sparks + shake */
+  private handleGunGunCollision(bodyA: Matter.Body, bodyB: Matter.Body): void {
+    const speed = Math.hypot(bodyA.velocity.x - bodyB.velocity.x, bodyA.velocity.y - bodyB.velocity.y)
+    if (speed < 1) return // ignore micro-collisions
+
+    // Spawn impact sparks at midpoint
+    const mx = (bodyA.position.x + bodyB.position.x) / 2
+    const my = (bodyA.position.y + bodyB.position.y) / 2
+    this.spawnHitSparks(mx, my)
+    this.shakeIntensity = Math.min(this.shakeIntensity + 5, 18)
   }
 
   private endBattle(): void {
@@ -778,7 +839,8 @@ export class Game {
   }
 
   private updateShake(): void {
-    this.shakeIntensity *= 0.82
+    // Slower decay for a satisfying rumble
+    this.shakeIntensity *= 0.88
     if (this.shakeIntensity < 0.05) this.shakeIntensity = 0
   }
 
@@ -791,9 +853,28 @@ export class Game {
   }
 
   private spawnMuzzleFlash(x: number, y: number): void {
-    for (let i = 0; i < 5; i++) {
+    // Large bright burst
+    for (let i = 0; i < 8; i++) {
       if (this.particles.length >= MAX_PARTICLES) break
-      this.particles.push({ x, y, vx: 0, vy: 0, life: 4, maxLife: 4, color: COLORS.MUZZLE_FLASH, size: 6 + Math.random() * 4, alpha: 1, type: 'muzzle' })
+      const a = Math.random() * Math.PI * 2
+      const s = Math.random() * 2.5
+      this.particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 9, maxLife: 9, color: COLORS.MUZZLE_FLASH, size: 14 + Math.random() * 10, alpha: 1, type: 'muzzle' })
+    }
+    // Tight sparks radiating outward
+    for (let i = 0; i < 6; i++) {
+      if (this.particles.length >= MAX_PARTICLES) break
+      const a = Math.random() * Math.PI * 2
+      const s = 3 + Math.random() * 4
+      this.particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 7, maxLife: 7, color: '#ffffff', size: 3, alpha: 1, type: 'spark' })
+    }
+  }
+
+  private spawnWallImpactSparks(x: number, y: number): void {
+    for (let i = 0; i < 10; i++) {
+      if (this.particles.length >= MAX_PARTICLES) break
+      const a = Math.random() * Math.PI * 2
+      const s = 2 + Math.random() * 5
+      this.particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 18, maxLife: 18, color: COLORS.WALL_IMPACT, size: 2 + Math.random() * 3, alpha: 1, type: 'spark' })
     }
   }
 
@@ -870,6 +951,7 @@ export class Game {
     this.damageNumbers = []
     this.bodiesToRemove = []
     this.hitFlashTimers.clear()
+    this.lastWallBounceFrame.clear()
     this.shakeIntensity = 0
     this.timeScale = 1
     this.winnerId = ''
