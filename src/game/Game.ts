@@ -27,7 +27,8 @@ import {
   RecoilState, createRecoilState,
   applyRecoilPhysics, applyRecoilPlayer, decayPlayerRecoil,
   decayAIRecoil, getDynamicSpread,
-  gaussianRandom, isStableEnough,
+  gaussianRandom, isStableEnough, applyImpactToRecoil,
+  combineSimultaneousImpulses,
 } from './physics/recoil'
 import {
   isBulletCollision, isGunCollision, getBodyOwnerId,
@@ -100,8 +101,13 @@ export class Game {
   private boundKeyHandler: (e: KeyboardEvent) => void
   private boundPointerDown: (e: PointerEvent) => void
   private playerFireTimer = 0
+  private botLastFireTime: number = 0
   private recoilState: RecoilState = createRecoilState()
   private aiRecoilState: RecoilState = createRecoilState()
+  // Rule 3: impulses each gun receives within one collisionStart batch, so
+  // simultaneous touches (e.g. gun hits wall AND other gun in the same tick)
+  // are vector-summed instead of stacked additively. Cleared every batch.
+  private pendingImpulses: Map<string, { x: number; y: number }[]> = new Map()
   private botProfile: BotProfile = BOT_PROFILES[1]
   private botDifficultyLevel: number = 3
   // Adjust bot difficulty (1-5) by scaling profile parameters and storing level
@@ -204,6 +210,10 @@ export class Game {
 
   private setupCollisions(): void {
     Matter.Events.on(this.engine, 'collisionStart', (event) => {
+      // Rule 3: reset the same-tick impulse tracker once per batch, so every
+      // pair resolved in this physics step can see what else touched the
+      // same gun this step (vector-summed in handleGunGunCollision).
+      this.pendingImpulses.clear()
       for (const pair of event.pairs) this.handleCollision(pair.bodyA, pair.bodyB)
     })
   }
@@ -365,6 +375,7 @@ export class Game {
     this.playerFireTimer = 0
     this.recoilState = createRecoilState()
     this.aiRecoilState = createRecoilState()
+    this.pendingImpulses.clear()
     this.botProfile = this.createBotProfile()
     // Apply stored difficulty level to the newly created bot profile
     this.setBotDifficulty(this.botDifficultyLevel)
@@ -438,12 +449,14 @@ export class Game {
       this.bullets.push(bd)
     }
 
+    const shotNow = performance.now()
     if (gunId === 'A') {
-      applyRecoilPhysics(gun.body, model, this.settings.recoilMultiplier)
-      applyRecoilPlayer(this.recoilState, model, this.settings.recoilMultiplier, performance.now())
+      applyRecoilPhysics(gun.body, model, this.settings.recoilMultiplier, this.recoilState, shotNow)
+      applyRecoilPlayer(this.recoilState, model, this.settings.recoilMultiplier, shotNow)
     } else {
-      applyRecoilPhysics(gun.body, model, this.settings.recoilMultiplier)
-      applyRecoilPlayer(this.aiRecoilState, model, this.settings.recoilMultiplier, performance.now())
+      this.botLastFireTime = shotNow
+      applyRecoilPhysics(gun.body, model, this.settings.recoilMultiplier, this.aiRecoilState, shotNow)
+      applyRecoilPlayer(this.aiRecoilState, model, this.settings.recoilMultiplier, shotNow)
     }
 
     this.statsSystem.recordShot(gunId)
@@ -554,7 +567,13 @@ export class Game {
     this.rafId = requestAnimationFrame(this.gameLoop)
   }
 
+  private readonly BOT_RECOIL_GRACE_MS = 180
+
   private applyBotStabilizer(gun: GunData): void {
+    // Grace period after firing — let the recoil rotation be visible before
+    // the stabilizer fights it. Makes bot feel alive instead of robotic.
+    if (performance.now() - this.botLastFireTime < this.BOT_RECOIL_GRACE_MS) return
+
     const target = this.guns.get('A')
     if (!target || target.health <= 0) return
 
@@ -576,7 +595,7 @@ export class Game {
   }
 
   private keepGunInsideArena(gun: GunData): void {
-    // Cap speed to prevent physics instability (using configured limits)
+    // Cap speed to prevent physics instability
     const speed = Math.hypot(gun.body.velocity.x, gun.body.velocity.y)
     if (speed > MAX_GUN_LINEAR_SPEED) {
       const scale = MAX_GUN_LINEAR_SPEED / speed
@@ -596,12 +615,77 @@ export class Game {
     const minY = WALL_THICKNESS + margin
     const maxY = WALL_THICKNESS + this.arena.height - margin
     const { x, y } = gun.body.position
-    const clampedX = Math.max(minX, Math.min(maxX, x))
-    const clampedY = Math.max(minY, Math.min(maxY, y))
+    const restitution = gun.model.restitution
 
-    if (clampedX !== x || clampedY !== y) {
-      // Position-correct only. Matter.js engine owns all velocity resolution.
-      Matter.Body.setPosition(gun.body, { x: clampedX, y: clampedY })
+    // Rule 3 (corner case): a gun can hit two walls in the same tick (e.g. a
+    // corner). Instead of applying two independent flat recoil shocks, we
+    // collect each wall's actual Δv as an impulse vector and vector-sum them
+    // — same treatment as gun-gun collisions — so a corner hit is physically
+    // consistent (perpendicular walls partially reinforce, not double-stack).
+    const wallImpulses: { x: number; y: number }[] = []
+
+    // Left wall
+    if (x < minX) {
+      Matter.Body.setPosition(gun.body, { x: minX, y: gun.body.position.y })
+      if (gun.body.velocity.x < 0) {
+        const preVx = gun.body.velocity.x, preVy = gun.body.velocity.y
+        const vx = gun.body.velocity.x * -(1 + restitution)
+        const vy = gun.body.velocity.y * 0.85
+        Matter.Body.setVelocity(gun.body, { x: vx, y: vy })
+        Matter.Body.setAngularVelocity(gun.body, gun.body.angularVelocity * -0.3 + (Math.random() - 0.5) * 0.08)
+        wallImpulses.push({ x: vx - preVx, y: vy - preVy })
+      }
+    }
+    // Right wall
+    if (x > maxX) {
+      Matter.Body.setPosition(gun.body, { x: maxX, y: gun.body.position.y })
+      if (gun.body.velocity.x > 0) {
+        const preVx = gun.body.velocity.x, preVy = gun.body.velocity.y
+        const vx = gun.body.velocity.x * -(1 + restitution)
+        const vy = gun.body.velocity.y * 0.85
+        Matter.Body.setVelocity(gun.body, { x: vx, y: vy })
+        Matter.Body.setAngularVelocity(gun.body, gun.body.angularVelocity * -0.3 + (Math.random() - 0.5) * 0.08)
+        wallImpulses.push({ x: vx - preVx, y: vy - preVy })
+      }
+    }
+    // Top wall
+    if (y < minY) {
+      Matter.Body.setPosition(gun.body, { x: gun.body.position.x, y: minY })
+      if (gun.body.velocity.y < 0) {
+        const preVx = gun.body.velocity.x, preVy = gun.body.velocity.y
+        const vx = gun.body.velocity.x * 0.85
+        const vy = gun.body.velocity.y * -(1 + restitution)
+        Matter.Body.setVelocity(gun.body, { x: vx, y: vy })
+        Matter.Body.setAngularVelocity(gun.body, gun.body.angularVelocity * -0.3 + (Math.random() - 0.5) * 0.08)
+        wallImpulses.push({ x: vx - preVx, y: vy - preVy })
+      }
+    }
+    // Bottom wall
+    if (y > maxY) {
+      Matter.Body.setPosition(gun.body, { x: gun.body.position.x, y: maxY })
+      if (gun.body.velocity.y > 0) {
+        const preVx = gun.body.velocity.x, preVy = gun.body.velocity.y
+        const vx = gun.body.velocity.x * 0.85
+        const vy = gun.body.velocity.y * -(1 + restitution)
+        Matter.Body.setVelocity(gun.body, { x: vx, y: vy })
+        Matter.Body.setAngularVelocity(gun.body, gun.body.angularVelocity * -0.3 + (Math.random() - 0.5) * 0.08)
+        wallImpulses.push({ x: vx - preVx, y: vy - preVy })
+      }
+    }
+
+    // Apply impact recoil shock if we hit a wall — magnitude now comes from
+    // the REAL velocity change (impact-speed factor), vector-summed across
+    // any simultaneous wall hits (Rule 3), then damped by the Fibonacci
+    // stack (Rule 2) inside applyImpactToRecoil itself.
+    if (wallImpulses.length > 0) {
+      const now = performance.now()
+      const state = gun.id === 'A' ? this.recoilState : this.aiRecoilState
+      const maxSingle = Math.max(...wallImpulses.map(v => Math.hypot(v.x, v.y)))
+      const combinedRatio = combineSimultaneousImpulses(wallImpulses)
+      // Normalize against the gun's own max linear speed so impact magnitude
+      // is a comparable ~0..2 scalar across gun models of different mass/speed.
+      const normalizedImpact = Math.min(2, (maxSingle * combinedRatio) / MAX_GUN_LINEAR_SPEED * 3)
+      applyImpactToRecoil(state, gun.model, now, normalizedImpact || 1)
     }
   }
 
@@ -624,12 +708,104 @@ export class Game {
     this.shakeIntensity = Math.min(this.shakeIntensity + 4, 14)
   }
 
-  /** Billiard-style collision between two guns: exchange momentum + sparks + shake */
+  /**
+   * Gun-gun collision: separation force + MASS-WEIGHTED restitution impulse
+   * (real 1D collision response: J = -(1+e)*v_rel_n / (1/mA + 1/mB) — not the
+   * old flat 50/50 velocity split, which silently assumed equal mass) +
+   * recoil shock scaled by the actual impulse and vector-summed against any
+   * other collision the same gun takes this same physics tick (Rule 3).
+   */
   private handleGunGunCollision(bodyA: Matter.Body, bodyB: Matter.Body): void {
     const speed = Math.hypot(bodyA.velocity.x - bodyB.velocity.x, bodyA.velocity.y - bodyB.velocity.y)
     if (speed < 1) return // ignore micro-collisions
 
-    // Spawn impact sparks at midpoint
+    const dx = bodyB.position.x - bodyA.position.x
+    const dy = bodyB.position.y - bodyA.position.y
+    const dist = Math.hypot(dx, dy)
+    if (dist < 0.001) return
+
+    const nx = dx / dist
+    const ny = dy / dist
+
+    const gunA = this.guns.get(getGunIdFromBody(bodyA))
+    const gunB = this.guns.get(getGunIdFromBody(bodyB))
+    const massA = gunA?.model.mass ?? bodyA.mass
+    const massB = gunB?.model.mass ?? bodyB.mass
+
+    // Separation force — push guns apart so they don't overlap
+    const combinedRadius = ((gunA?.model.length ?? 50) + (gunB?.model.length ?? 50)) / 2
+    const overlap = Math.max(0, combinedRadius - dist)
+    if (overlap > 0) {
+      const sepForce = overlap * 0.4
+      Matter.Body.applyForce(bodyA, bodyA.position, { x: -nx * sepForce, y: -ny * sepForce })
+      Matter.Body.applyForce(bodyB, bodyB.position, { x: nx * sepForce, y: ny * sepForce })
+    }
+
+    // Mass-weighted restitution impulse along the collision normal:
+    //   J = -(1 + e) * v_rel_n / (1/mA + 1/mB)
+    // A heavy sniper barely moves when a light pistol bounces off it, and
+    // vice versa — correct for any mass pairing, unlike the old flat split.
+    const relVx = bodyA.velocity.x - bodyB.velocity.x
+    const relVy = bodyA.velocity.y - bodyB.velocity.y
+    const relVn = relVx * nx + relVy * ny
+
+    let impulseVecA = { x: 0, y: 0 }
+    let impulseVecB = { x: 0, y: 0 }
+
+    if (relVn > 0) {
+      const restitution = Math.min(gunA?.model.restitution ?? 0.7, gunB?.model.restitution ?? 0.7)
+      const invMassSum = 1 / massA + 1 / massB
+      const J = (relVn * (1 + restitution)) / invMassSum
+
+      impulseVecA = { x: -nx * J / massA, y: -ny * J / massA }
+      impulseVecB = { x: nx * J / massB, y: ny * J / massB }
+
+      Matter.Body.setVelocity(bodyA, {
+        x: bodyA.velocity.x + impulseVecA.x,
+        y: bodyA.velocity.y + impulseVecA.y,
+      })
+      Matter.Body.setVelocity(bodyB, {
+        x: bodyB.velocity.x + impulseVecB.x,
+        y: bodyB.velocity.y + impulseVecB.y,
+      })
+    }
+
+    // Angular jolt — now proportional to impulse magnitude (impact-speed
+    // factor) instead of a flat random range, so harder hits spin more.
+    const jMagA = Math.hypot(impulseVecA.x, impulseVecA.y)
+    const jMagB = Math.hypot(impulseVecB.x, impulseVecB.y)
+    const spinA = (Math.random() - 0.5) * 0.12 * (1 + jMagA * 0.3)
+    const spinB = (Math.random() - 0.5) * 0.12 * (1 + jMagB * 0.3)
+    Matter.Body.setAngularVelocity(bodyA, bodyA.angularVelocity + spinA)
+    Matter.Body.setAngularVelocity(bodyB, bodyB.angularVelocity + spinB)
+
+    // Track this impulse for same-tick multi-touch combining (Rule 3), then
+    // apply recoil shock: vector-summed against any other hit this gun took
+    // this tick, damped by the Fibonacci stack (Rule 2), scaled by real
+    // impulse magnitude (impact-speed + mass factors already baked in).
+    const now = performance.now()
+    if (gunA) {
+      const key = `${gunA.id}`
+      const list = this.pendingImpulses.get(key) ?? []
+      list.push(impulseVecA)
+      this.pendingImpulses.set(key, list)
+      const stateA = gunA.id === 'A' ? this.recoilState : this.aiRecoilState
+      const combinedRatio = combineSimultaneousImpulses(list)
+      const normalizedImpact = Math.min(2, (jMagA * combinedRatio) / MAX_GUN_LINEAR_SPEED * 3) || jMagA / MAX_GUN_LINEAR_SPEED
+      applyImpactToRecoil(stateA, gunA.model, now, normalizedImpact || 1)
+    }
+    if (gunB) {
+      const key = `${gunB.id}`
+      const list = this.pendingImpulses.get(key) ?? []
+      list.push(impulseVecB)
+      this.pendingImpulses.set(key, list)
+      const stateB = gunB.id === 'A' ? this.recoilState : this.aiRecoilState
+      const combinedRatio = combineSimultaneousImpulses(list)
+      const normalizedImpact = Math.min(2, (jMagB * combinedRatio) / MAX_GUN_LINEAR_SPEED * 3) || jMagB / MAX_GUN_LINEAR_SPEED
+      applyImpactToRecoil(stateB, gunB.model, now, normalizedImpact || 1)
+    }
+
+    // Visual effects
     const mx = (bodyA.position.x + bodyB.position.x) / 2
     const my = (bodyA.position.y + bodyB.position.y) / 2
     this.spawnHitSparks(mx, my)

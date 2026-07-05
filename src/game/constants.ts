@@ -4,15 +4,20 @@ export const WALL_THICKNESS = 45
 
 export const GUN_HEIGHT = 22
 export const GUN_HEALTH = 100
-export const GUN_RESTITUTION = 0.75   // wall restitution — snappy bounce
+export const GUN_RESTITUTION = 0.88   // wall restitution — snappy bounce
 export const GUN_FRICTION = 0.1       // low wall friction so guns slide on bounce
-export const GUN_ANGULAR_DAMPING = 0.025  // soft — lets spin last longer
+export const GUN_ANGULAR_DAMPING = 0.010  // soft — lets spin last longer
 
 export const MAX_RECOIL_SPEED_DELTA = 12   // px/frame a single shot can add
-export const MAX_GUN_TOTAL_SPEED = 22      // absolute cap right after firing
-export const MAX_GUN_LINEAR_SPEED = 28     // absolute cap, enforced every frame
-export const MAX_GUN_ANGULAR_SPEED = 1.2   // rad/frame, enforced every frame
-export const MAX_RECOIL_ANGULAR_KICK = 0.25 // rad/frame added per shot
+export const MAX_GUN_TOTAL_SPEED = 30      // absolute cap right after firing
+export const MAX_GUN_LINEAR_SPEED = 36     // absolute cap, enforced every frame
+export const MAX_GUN_ANGULAR_SPEED = 2.0   // rad/frame, enforced every frame
+export const MAX_RECOIL_ANGULAR_KICK = 0.40 // rad/frame added per shot
+
+// Fibonacci stacking-damper tuning (Rule 2: consecutive recoil events before
+// a gun fully recovers get damped by 1/fib(n)^2 instead of stacking linearly)
+export const RECOIL_STABLE_EPSILON = 0.01   // kick below this = "fully recovered", resets n to 1
+export const RECOIL_FIB_CAP_INDEX = 10      // caps n so fib() never grows unbounded (fib(10)=55, damping≈1/3025)
 
 export const BULLET_RADIUS = 3
 export const BULLET_MASS = 0.1
@@ -69,7 +74,7 @@ export const GUN_MODELS: Record<string, GunModelConfig> = {
     fireCooldownMin: 300,
     fireCooldownMax: 700,
     recoilForce: 0.0048,       // stronger — clearly felt
-    recoilAngularKick: 0.08,
+    recoilAngularKick: 0.15,
     bulletSpeed: 14,
     bulletSpread: 0.03,
     bulletsPerShot: 1,
@@ -80,8 +85,8 @@ export const GUN_MODELS: Record<string, GunModelConfig> = {
     stability: 0.5,
     recoverySpeed: 0.92,
     spreadGrowth: 0.015,
-    frictionAir: 0.004,        // low air friction — gun slides naturally
-    restitution: 0.75,
+    frictionAir: 0.0025,        // low air friction — gun slides naturally
+    restitution: 0.82,
   },
   rifle: {
     name: 'Rifle',
@@ -90,7 +95,7 @@ export const GUN_MODELS: Record<string, GunModelConfig> = {
     fireCooldownMin: 500,
     fireCooldownMax: 1100,
     recoilForce: 0.007,        // heavy kick
-    recoilAngularKick: 0.06,
+    recoilAngularKick: 0.12,
     bulletSpeed: 22,
     bulletSpread: 0.01,
     bulletsPerShot: 1,
@@ -101,8 +106,8 @@ export const GUN_MODELS: Record<string, GunModelConfig> = {
     stability: 0.7,
     recoverySpeed: 0.95,
     spreadGrowth: 0.008,
-    frictionAir: 0.002,
-    restitution: 0.65,
+    frictionAir: 0.0015,
+    restitution: 0.78,
     customInertia: 2600,
   },
   shotgun: {
@@ -112,7 +117,7 @@ export const GUN_MODELS: Record<string, GunModelConfig> = {
     fireCooldownMin: 800,
     fireCooldownMax: 1500,
     recoilForce: 0.014,        // violent backward launch
-    recoilAngularKick: 0.18,
+    recoilAngularKick: 0.30,
     bulletSpeed: 10,
     bulletSpread: 0.18,
     bulletsPerShot: 5,
@@ -123,8 +128,8 @@ export const GUN_MODELS: Record<string, GunModelConfig> = {
     stability: 0.2,
     recoverySpeed: 0.85,
     spreadGrowth: 0.04,
-    frictionAir: 0.005,
-    restitution: 0.55,
+    frictionAir: 0.003,
+    restitution: 0.72,
   },
   sniper: {
     name: 'Sniper',
@@ -133,7 +138,7 @@ export const GUN_MODELS: Record<string, GunModelConfig> = {
     fireCooldownMin: 1200,
     fireCooldownMax: 2000,
     recoilForce: 0.022,        // extreme — gun flies backward on shot
-    recoilAngularKick: 0.04,
+    recoilAngularKick: 0.10,
     bulletSpeed: 30,
     bulletSpread: 0.005,
     bulletsPerShot: 1,
@@ -144,8 +149,8 @@ export const GUN_MODELS: Record<string, GunModelConfig> = {
     stability: 0.85,
     recoverySpeed: 0.98,
     spreadGrowth: 0.004,
-    frictionAir: 0.001,
-    restitution: 0.5,
+    frictionAir: 0.0008,
+    restitution: 0.68,
     customInertia: 3500,
   },
 }
