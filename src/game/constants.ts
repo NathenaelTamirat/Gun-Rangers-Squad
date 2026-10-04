@@ -6,13 +6,13 @@ export const GUN_HEIGHT = 22
 export const GUN_HEALTH = 100
 export const GUN_RESTITUTION = 0.88   // wall restitution — snappy bounce
 export const GUN_FRICTION = 0.1       // low wall friction so guns slide on bounce
-export const GUN_ANGULAR_DAMPING = 0.010  // soft — lets spin last longer
+export const GUN_ANGULAR_DAMPING = 0.004  // very soft — spin lasts longer, feels weighty
 
-export const MAX_RECOIL_SPEED_DELTA = 12   // px/frame a single shot can add
-export const MAX_GUN_TOTAL_SPEED = 30      // absolute cap right after firing
-export const MAX_GUN_LINEAR_SPEED = 36     // absolute cap, enforced every frame
-export const MAX_GUN_ANGULAR_SPEED = 2.0   // rad/frame, enforced every frame
-export const MAX_RECOIL_ANGULAR_KICK = 0.40 // rad/frame added per shot
+export const MAX_RECOIL_SPEED_DELTA = 25   // px/frame a single shot can add
+export const MAX_GUN_TOTAL_SPEED = 55      // raised — recoil needs room to breathe
+export const MAX_GUN_LINEAR_SPEED = 60     // raised — collisions can be fast
+export const MAX_GUN_ANGULAR_SPEED = 4.0   // raised — guns can spin hard on impact
+export const MAX_RECOIL_ANGULAR_KICK = 1.2 // raised — rotation must be visible
 
 // Fibonacci stacking-damper tuning (Rule 2: consecutive recoil events before
 // a gun fully recovers get damped by 1/fib(n)^2 instead of stacking linearly)

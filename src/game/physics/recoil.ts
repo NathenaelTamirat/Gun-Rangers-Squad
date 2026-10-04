@@ -14,27 +14,9 @@ export function gaussianRandom(mean: number, stdDev: number): number {
   return mean + z * stdDev
 }
 
-// ---------------------------------------------------------------------------
-// Fibonacci² stacking damper
-//
-// Physical justification: a body already carrying residual recoil momentum
-// has less "room" to cleanly absorb a fresh impulse — part of the new impulse
-// fights the existing momentum vector instead of adding to it cleanly. We
-// model that lost-efficiency as a damping factor 1/fib(n)^2, where n counts
-// consecutive recoil-causing events (shots, wall hits, gun-gun hits) since
-// the gun last returned to rest (kick ≈ 0).
-//
-// fib(1)=1 fib(2)=1 fib(3)=2 fib(4)=3 fib(5)=5 fib(6)=8 fib(7)=13...
-// factor:   1    1    0.25   0.111  0.04   0.0156 0.0059
-//
-// It converges to ~0 fast, which is intentional: it is a STACKING damper,
-// not a general recoil-strength curve. A gun that fully recovers between
-// events always gets full-strength recoil (rule 1) — this only suppresses
-// runaway accumulation when events land faster than the gun can settle.
-// ---------------------------------------------------------------------------
-
-// fibCache[i] stores F(i+1) in the 1-indexed sequence F(1)=1, F(2)=1, F(3)=2...
-// (i.e. fibCache[0]=F(1), fibCache[1]=F(2), fibCache[2]=F(3), ...)
+// Mild stacking damper — only kicks in after 3+ rapid consecutive shots.
+// fib(1)=1 fib(2)=1 fib(3)=2 → factor 0.25 only on 3rd+ rapid shot.
+// We cap at index 4 so it never goes below 1/9 — guns always feel alive.
 const fibCache: number[] = [1, 1]
 export function fibonacci(n: number): number {
   const clamped = Math.min(Math.max(1, Math.floor(n)), RECOIL_FIB_CAP_INDEX)
@@ -46,17 +28,20 @@ export function fibonacci(n: number): number {
 }
 
 export function fibDampingFactor(n: number): number {
-  const f = fibonacci(n)
+  // Cap at index 3 so max damping is 1/fib(3)^2 = 1/4 = 0.25
+  // This means even rapid fire never feels completely dead
+  const capped = Math.min(n, 3)
+  const f = fibonacci(capped)
   return 1 / (f * f)
 }
 
 export interface RecoilState {
-  kick: number                // current linear recoil magnitude (px/frame-equivalent), decays toward 0
-  rotation: number             // current angular recoil velocity contribution
+  kick: number
+  rotation: number
   recoveryVelocity: number
-  accumulatedSpread: number    // 0..1, feeds bulletSpread penalty
+  accumulatedSpread: number
   lastShotTime: number
-  stackCount: number           // n in the Fibonacci damper — consecutive events since last full recovery
+  stackCount: number
   lastEventTime: number
 }
 
@@ -76,13 +61,6 @@ export function isFullyRecovered(state: RecoilState): boolean {
   return state.kick < RECOIL_STABLE_EPSILON
 }
 
-/**
- * Advances the stack counter for a new recoil-causing event.
- * Resets to n=1 if the gun had fully recovered (kick ≈ 0) since the last
- * event — this is the "physically coherent reset" condition: residual
- * stacking penalty only exists while residual motion exists, never on a
- * fixed timer.
- */
 function advanceStack(state: RecoilState, now: number): number {
   if (isFullyRecovered(state)) {
     state.stackCount = 1
@@ -94,16 +72,15 @@ function advanceStack(state: RecoilState, now: number): number {
 }
 
 // ---------------------------------------------------------------------------
-// Rule 1 — Shooting impulse (momentum conservation)
-//
-//   J = m_bullet * v_bullet         (bullet momentum imparted)
-//   Δv_gun = -J / m_gun             (equal & opposite, scaled by gun mass)
-//
-// This is why shooting is "high intensity" by construction: bullet momentum
-// is large relative to gun mass. No special-casing needed — it falls out of
-// physics. recoilForce in GunModelConfig is a per-model scalar tuning the
-// effective bullet momentum for that weapon (heavier "virtual round" for
-// sniper/shotgun), not an arbitrary kick number.
+// SHOOTING RECOIL
+// Think: a real gun with a remote trigger bolted to it.
+// The propellant fires, the bullet exits the barrel at high velocity.
+// Newton's 3rd law: equal and opposite impulse slams the gun backward
+// along the barrel axis — hard, immediate, no delay.
+// The barrel sits above the center of mass, so the impulse also creates
+// a torque that rotates the muzzle upward (or downward depending on
+// which side the barrel is on). This is muzzle flip — always the same
+// direction for a given gun orientation, never random.
 // ---------------------------------------------------------------------------
 export function applyRecoilPhysics(
   gunBody: Matter.Body,
@@ -116,39 +93,38 @@ export function applyRecoilPhysics(
   const n = advanceStack(recoilState, now)
   const damping = fibDampingFactor(n)
 
-  // Real gun recoil: bullet leaves barrel, equal & opposite impulse kicks
-  // the gun straight back along the barrel axis. Heavier gun = less kick.
-  // recoilForce is calibrated per-model (sniper >> pistol). We scale by
-  // 8000 (up from 1000) so the kick is actually visible — a gun sitting
-  // still should lurch backward several pixels per shot.
-  const stabilityMul = Math.max(0.4, 1 - model.stability * 0.5)
-  const impulseMagnitude = model.recoilForce * recoilMul * stabilityMul * 8000
-  const deltaV = (impulseMagnitude / model.mass) * damping
+  // Linear impulse: straight back along barrel axis.
+  // Scale 18000 gives pistol ~14 px/frame, sniper ~50 px/frame on first shot.
+  // Heavier guns resist more (divide by mass). Stability reduces by up to 40%.
+  const stabilityMul = Math.max(0.6, 1 - model.stability * 0.4)
+  const deltaV = (model.recoilForce * recoilMul * stabilityMul * 18000 / model.mass) * damping
 
-  const newVx = gunBody.velocity.x + (-Math.cos(angle) * deltaV)
-  const newVy = gunBody.velocity.y + (-Math.sin(angle) * deltaV)
+  const newVx = gunBody.velocity.x - Math.cos(angle) * deltaV
+  const newVy = gunBody.velocity.y - Math.sin(angle) * deltaV
 
-  const resultSpeed = Math.hypot(newVx, newVy)
-  if (resultSpeed > MAX_GUN_TOTAL_SPEED) {
-    const scale = MAX_GUN_TOTAL_SPEED / resultSpeed
-    Matter.Body.setVelocity(gunBody, { x: newVx * scale, y: newVy * scale })
+  const spd = Math.hypot(newVx, newVy)
+  if (spd > MAX_GUN_TOTAL_SPEED) {
+    const s = MAX_GUN_TOTAL_SPEED / spd
+    Matter.Body.setVelocity(gunBody, { x: newVx * s, y: newVy * s })
   } else {
     Matter.Body.setVelocity(gunBody, { x: newVx, y: newVy })
   }
 
-  // Angular kick: barrel sits above CoM, so recoil force creates a torque.
-  // The cross product of barrel-offset × recoil-force gives the sign.
-  // barrelOffsetY is negative (barrel above center in local space).
+  // Angular kick: barrel is above CoM (barrelOffsetY < 0 in local space).
+  // Cross product of barrel-offset-vector × recoil-force-vector gives torque sign.
+  // This is always deterministic — same gun angle always spins the same way.
   const halfLen = model.length / 2
-  const barrelOffsetY = -GUN_HEIGHT * 0.15
-  const rfx = -Math.cos(angle)
+  const barrelOffsetY = -GUN_HEIGHT * 0.18   // barrel above CoM
+  const rfx = -Math.cos(angle)               // recoil direction
   const rfy = -Math.sin(angle)
+  // Barrel tip world offset
   const box = Math.cos(angle) * halfLen - Math.sin(angle) * barrelOffsetY
   const boy = Math.sin(angle) * halfLen + Math.cos(angle) * barrelOffsetY
-  const torqueSign = box * rfy - boy * rfx > 0 ? 1 : -1
-  const spinMag = gaussianRandom(0.85, 0.15)
-  const rawSpin = model.recoilAngularKick * recoilMul * damping * torqueSign * Math.max(0.4, spinMag)
-  const clampedSpin = Math.min(Math.abs(rawSpin), MAX_RECOIL_ANGULAR_KICK) * Math.sign(rawSpin)
+  // 2D cross product → torque sign
+  const torqueSign = (box * rfy - boy * rfx) > 0 ? 1 : -1
+  // Angular kick magnitude — strong enough to visibly rotate the gun
+  const angularDeltaV = model.recoilAngularKick * recoilMul * damping * torqueSign * 3.5
+  const clampedSpin = Math.max(-MAX_RECOIL_ANGULAR_KICK, Math.min(MAX_RECOIL_ANGULAR_KICK, angularDeltaV))
   Matter.Body.setAngularVelocity(gunBody, gunBody.angularVelocity + clampedSpin)
 }
 
@@ -165,20 +141,17 @@ export function applyRecoilPlayer(
   const n = state.stackCount || 1
   const damping = fibDampingFactor(n)
 
-  const stabilityMul = Math.max(0.3, 1 - model.stability * 0.6)
+  const stabilityMul = Math.max(0.6, 1 - model.stability * 0.4)
   const baseKick = model.recoilForce * recoilMul * stabilityMul * 20 * damping
-  const kickAmount = gaussianRandom(baseKick, baseKick * 0.2) * (1 + state.accumulatedSpread * 0.3)
+  const kickAmount = gaussianRandom(baseKick, baseKick * 0.15) * (1 + state.accumulatedSpread * 0.3)
 
   state.kick = Math.min(state.kick + kickAmount, 0.8)
   state.recoveryVelocity = state.kick * 0.06
   state.rotation = gaussianRandom(0, model.recoilAngularKick * recoilMul * 30 * damping)
-
   state.lastShotTime = now
 }
 
 export function decayPlayerRecoil(state: RecoilState, delta: number): void {
-  // Delta-normalized decay — matches decayAIRecoil pattern so both are
-  // frame-rate independent. Factor 0.90 is per 16.67ms (60fps reference).
   const t = delta / 16.67
   if (state.kick > 0) {
     state.kick -= state.recoveryVelocity * t
@@ -205,24 +178,6 @@ export function getDynamicSpread(
   return model.bulletSpread + recoilPenalty + movementPenalty
 }
 
-// ---------------------------------------------------------------------------
-// Rule 2 + Rule 3 combined — impact-driven recoil with vector-summed
-// simultaneous touches
-//
-// Rule 2: every impact event advances the Fibonacci stack counter and gets
-// damped by 1/fib(n)^2 if the gun hasn't fully recovered since the last event.
-//
-// Rule 3: when a gun experiences 2+ collisions in the same physics tick, we
-// do NOT apply each collision's full recoil independently (that would let
-// simultaneous hits add up to MORE recoil than either alone, which is
-// backwards). Instead the caller vector-sums the raw impulses from all
-// collisions touching this gun this tick (see combineSimultaneousImpulses)
-// and applies the *combined* impulse once through this function. This is
-// physically correct: opposing impulses partially cancel (a gun pinched
-// between a wall and the other gun nets LESS kick than either hit alone),
-// while aligned impulses still add — you don't need a separate flat penalty,
-// it falls out of vector addition.
-// ---------------------------------------------------------------------------
 export function applyImpactToRecoil(
   state: RecoilState,
   model: GunModelConfig,
@@ -239,36 +194,6 @@ export function applyImpactToRecoil(
   const baseBump = 0.15 * (1 - model.stability * 0.4) * impactMagnitude * damping
   state.kick = Math.min(state.kick + baseBump, 0.8)
   state.rotation += gaussianRandom(0, model.recoilAngularKick * 15 * damping)
-}
-
-/**
- * Vector-sums impulses from multiple simultaneous collisions on the same
- * body (Rule 3). Pass every collision-normal impulse vector affecting this
- * gun during the current physics tick; returns the net magnitude to feed
- * into applyImpactToRecoil as `impactMagnitude`, normalized against the
- * strongest individual impulse so a single hit still maps to ~1.0.
- */
-export function combineSimultaneousImpulses(
-  impulses: { x: number; y: number }[],
-): number {
-  if (impulses.length === 0) return 0
-  if (impulses.length === 1) return Math.hypot(impulses[0].x, impulses[0].y)
-
-  let sumX = 0, sumY = 0
-  let maxSingle = 0
-  for (const imp of impulses) {
-    sumX += imp.x
-    sumY += imp.y
-    maxSingle = Math.max(maxSingle, Math.hypot(imp.x, imp.y))
-  }
-  const netMagnitude = Math.hypot(sumX, sumY)
-  if (maxSingle < 1e-6) return 0
-
-  // Normalize relative to the strongest single impulse in the group, so:
-  //  - two aligned impulses -> netMagnitude ≈ sum -> ratio > 1 (still adds)
-  //  - two opposing impulses -> netMagnitude ≈ 0 -> ratio ≈ 0 (cancels)
-  //  - two perpendicular impulses -> ratio ≈ 0.7 (partial)
-  return netMagnitude / maxSingle
 }
 
 export function isStableEnough(

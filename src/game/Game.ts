@@ -594,78 +594,78 @@ export class Game {
   }
 
   private keepGunInsideArena(gun: GunData): void {
-    const speed = Math.hypot(gun.body.velocity.x, gun.body.velocity.y)
-    if (speed > MAX_GUN_LINEAR_SPEED) {
-      const scale = MAX_GUN_LINEAR_SPEED / speed
-      Matter.Body.setVelocity(gun.body, {
-        x: gun.body.velocity.x * scale,
-        y: gun.body.velocity.y * scale,
-      })
+    // Hard speed caps
+    const spd = Math.hypot(gun.body.velocity.x, gun.body.velocity.y)
+    if (spd > MAX_GUN_LINEAR_SPEED) {
+      const s = MAX_GUN_LINEAR_SPEED / spd
+      Matter.Body.setVelocity(gun.body, { x: gun.body.velocity.x * s, y: gun.body.velocity.y * s })
     }
     if (Math.abs(gun.body.angularVelocity) > MAX_GUN_ANGULAR_SPEED) {
       Matter.Body.setAngularVelocity(gun.body, Math.sign(gun.body.angularVelocity) * MAX_GUN_ANGULAR_SPEED)
     }
 
-    // We set gun restitution=0 so Matter.js applies zero bounce on wall hits.
-    // This function is the sole wall bounce resolver — runs every frame,
-    // applies correct v_new = -e * v_old, derives angular spin from the
-    // tangential velocity component (sliding along the wall surface).
-    const margin = Math.max(gun.model.length, GUN_HEIGHT) / 2 + 2
+    // Gun bodies have restitution=0 so Matter.js stops them dead at walls.
+    // We are the sole bounce resolver. We check position every frame.
+    // If the gun center is past a boundary we:
+    //   1. Snap position back to the boundary
+    //   2. Reflect the normal velocity component with restitution e
+    //   3. Derive angular spin from the tangential velocity (muzzle-flip on wall)
+    // We do NOT check velocity direction before bouncing — Matter.js may have
+    // already zeroed it. We just check position and enforce the boundary.
+    const margin = gun.model.length / 2 + 4
     const minX = WALL_THICKNESS + margin
     const maxX = WALL_THICKNESS + this.arena.width - margin
     const minY = WALL_THICKNESS + margin
     const maxY = WALL_THICKNESS + this.arena.height - margin
-    const pos = gun.body.position
-    const e = gun.model.restitution   // e.g. 0.82 for pistol
+    const e = gun.model.restitution
     const halfLen = gun.model.length / 2
 
-    // Left wall — normal +X, tangent is Y
-    if (pos.x < minX) {
-      Matter.Body.setPosition(gun.body, { x: minX, y: pos.y })
-      if (gun.body.velocity.x < 0) {
-        const vt = gun.body.velocity.y
-        Matter.Body.setVelocity(gun.body, {
-          x: -gun.body.velocity.x * e,
-          y: vt * 0.85,
-        })
-        Matter.Body.setAngularVelocity(gun.body, gun.body.angularVelocity * 0.6 + (vt / halfLen) * 0.3)
-      }
+    let vx = gun.body.velocity.x
+    let vy = gun.body.velocity.y
+    let px = gun.body.position.x
+    let py = gun.body.position.y
+    let av = gun.body.angularVelocity
+    let bounced = false
+
+    // Left wall
+    if (px < minX) {
+      px = minX
+      // Reflect: if moving left, bounce right. If already stopped (Matter zeroed it),
+      // give it a minimum outward kick so it doesn't stick.
+      const inSpeed = Math.abs(Math.min(vx, 0))
+      vx = Math.max(inSpeed * e, 1.5)   // always positive (rightward)
+      av = av * 0.5 + (vy / halfLen) * 0.35
+      bounced = true
     }
-    // Right wall — normal -X, tangent is Y
-    if (pos.x > maxX) {
-      Matter.Body.setPosition(gun.body, { x: maxX, y: pos.y })
-      if (gun.body.velocity.x > 0) {
-        const vt = gun.body.velocity.y
-        Matter.Body.setVelocity(gun.body, {
-          x: -gun.body.velocity.x * e,
-          y: vt * 0.85,
-        })
-        Matter.Body.setAngularVelocity(gun.body, gun.body.angularVelocity * 0.6 - (vt / halfLen) * 0.3)
-      }
+    // Right wall
+    if (px > maxX) {
+      px = maxX
+      const inSpeed = Math.abs(Math.max(vx, 0))
+      vx = -Math.max(inSpeed * e, 1.5)  // always negative (leftward)
+      av = av * 0.5 - (vy / halfLen) * 0.35
+      bounced = true
     }
-    // Top wall — normal +Y, tangent is X
-    if (pos.y < minY) {
-      Matter.Body.setPosition(gun.body, { x: pos.x, y: minY })
-      if (gun.body.velocity.y < 0) {
-        const vt = gun.body.velocity.x
-        Matter.Body.setVelocity(gun.body, {
-          x: vt * 0.85,
-          y: -gun.body.velocity.y * e,
-        })
-        Matter.Body.setAngularVelocity(gun.body, gun.body.angularVelocity * 0.6 - (vt / halfLen) * 0.3)
-      }
+    // Top wall
+    if (py < minY) {
+      py = minY
+      const inSpeed = Math.abs(Math.min(vy, 0))
+      vy = Math.max(inSpeed * e, 1.5)   // always positive (downward)
+      av = av * 0.5 - (vx / halfLen) * 0.35
+      bounced = true
     }
-    // Bottom wall — normal -Y, tangent is X
-    if (pos.y > maxY) {
-      Matter.Body.setPosition(gun.body, { x: pos.x, y: maxY })
-      if (gun.body.velocity.y > 0) {
-        const vt = gun.body.velocity.x
-        Matter.Body.setVelocity(gun.body, {
-          x: vt * 0.85,
-          y: -gun.body.velocity.y * e,
-        })
-        Matter.Body.setAngularVelocity(gun.body, gun.body.angularVelocity * 0.6 + (vt / halfLen) * 0.3)
-      }
+    // Bottom wall
+    if (py > maxY) {
+      py = maxY
+      const inSpeed = Math.abs(Math.max(vy, 0))
+      vy = -Math.max(inSpeed * e, 1.5)  // always negative (upward)
+      av = av * 0.5 + (vx / halfLen) * 0.35
+      bounced = true
+    }
+
+    if (bounced) {
+      Matter.Body.setPosition(gun.body, { x: px, y: py })
+      Matter.Body.setVelocity(gun.body, { x: vx, y: vy })
+      Matter.Body.setAngularVelocity(gun.body, av)
     }
   }
 
@@ -708,69 +708,72 @@ export class Game {
     const gunB = this.guns.get(getGunIdFromBody(bodyB))
     const massA = gunA?.model.mass ?? bodyA.mass
     const massB = gunB?.model.mass ?? bodyB.mass
+    const eA = gunA?.model.restitution ?? 0.75
+    const eB = gunB?.model.restitution ?? 0.75
+    const e = (eA + eB) * 0.5
 
-    // Separate overlapping bodies
-    const combinedRadius = ((gunA?.model.length ?? 50) + (gunB?.model.length ?? 50)) / 2
-    const overlap = Math.max(0, combinedRadius - dist)
+    // Positional separation — push apart so they don’t overlap
+    const combinedHalf = ((gunA?.model.length ?? 50) + (gunB?.model.length ?? 50)) / 2
+    const overlap = Math.max(0, combinedHalf - dist)
     if (overlap > 0) {
-      const sep = overlap * 0.5
+      const sep = overlap * 0.55
       Matter.Body.setPosition(bodyA, { x: bodyA.position.x - nx * sep, y: bodyA.position.y - ny * sep })
       Matter.Body.setPosition(bodyB, { x: bodyB.position.x + nx * sep, y: bodyB.position.y + ny * sep })
     }
 
-    // Relative velocity along collision normal
+    // Matter.js with restitution=0 has already zeroed the relative normal
+    // velocity by the time collisionStart fires. We reconstruct the
+    // pre-collision approach speed from the overlap and separation distance
+    // as a minimum, then apply the full mass-weighted impulse ourselves.
     const relVx = bodyA.velocity.x - bodyB.velocity.x
     const relVy = bodyA.velocity.y - bodyB.velocity.y
-    const relVn = relVx * nx + relVy * ny
+    let relVn = relVx * nx + relVy * ny
 
-    // Only resolve if approaching
+    // If Matter.js zeroed it, estimate from overlap (guns were approaching)
+    if (relVn <= 0 && overlap > 0) {
+      relVn = overlap * 0.8 + 2.0   // minimum collision speed
+    }
     if (relVn <= 0) return
 
     // Mass-weighted impulse: J = (1+e) * v_rel_n / (1/mA + 1/mB)
-    const restitution = Math.min(gunA?.model.restitution ?? 0.7, gunB?.model.restitution ?? 0.7)
-    const J = (relVn * (1 + restitution)) / (1 / massA + 1 / massB)
+    const J = (relVn * (1 + e)) / (1 / massA + 1 / massB)
+    const dvAx = -nx * J / massA
+    const dvAy = -ny * J / massA
+    const dvBx =  nx * J / massB
+    const dvBy =  ny * J / massB
 
-    const impulseVecA = { x: -nx * J / massA, y: -ny * J / massA }
-    const impulseVecB = { x:  nx * J / massB, y:  ny * J / massB }
+    Matter.Body.setVelocity(bodyA, { x: bodyA.velocity.x + dvAx, y: bodyA.velocity.y + dvAy })
+    Matter.Body.setVelocity(bodyB, { x: bodyB.velocity.x + dvBx, y: bodyB.velocity.y + dvBy })
 
-    Matter.Body.setVelocity(bodyA, { x: bodyA.velocity.x + impulseVecA.x, y: bodyA.velocity.y + impulseVecA.y })
-    Matter.Body.setVelocity(bodyB, { x: bodyB.velocity.x + impulseVecB.x, y: bodyB.velocity.y + impulseVecB.y })
-
-    // Angular spin from tangential relative velocity at contact
+    // Angular spin from tangential relative velocity
     const relVtx = relVx - relVn * nx
     const relVty = relVy - relVn * ny
     const relVtMag = Math.hypot(relVtx, relVty)
     const halfLenA = (gunA?.model.length ?? 50) / 2
     const halfLenB = (gunB?.model.length ?? 50) / 2
     const tangentSign = relVtx * ny - relVty * nx
-    const spinA = (tangentSign > 0 ? 1 : -1) * Math.min(relVtMag / halfLenA * 0.2, 0.4)
-    const spinB = (tangentSign > 0 ? -1 : 1) * Math.min(relVtMag / halfLenB * 0.2, 0.4)
+    const spinA = (tangentSign > 0 ? 1 : -1) * Math.min(relVtMag / halfLenA * 0.25 + 0.15, MAX_GUN_ANGULAR_SPEED * 0.5)
+    const spinB = (tangentSign > 0 ? -1 : 1) * Math.min(relVtMag / halfLenB * 0.25 + 0.15, MAX_GUN_ANGULAR_SPEED * 0.5)
     Matter.Body.setAngularVelocity(bodyA, bodyA.angularVelocity + spinA)
     Matter.Body.setAngularVelocity(bodyB, bodyB.angularVelocity + spinB)
 
-    // Recoil state tracking
-    const jMagA = Math.hypot(impulseVecA.x, impulseVecA.y)
-    const jMagB = Math.hypot(impulseVecB.x, impulseVecB.y)
+    // Recoil state
+    const jMagA = Math.hypot(dvAx, dvAy)
+    const jMagB = Math.hypot(dvBx, dvBy)
     const now = performance.now()
     if (gunA) {
-      const list = this.pendingImpulses.get(gunA.id) ?? []
-      list.push(impulseVecA)
-      this.pendingImpulses.set(gunA.id, list)
       const stateA = gunA.id === 'A' ? this.recoilState : this.aiRecoilState
-      applyImpactToRecoil(stateA, gunA.model, now, Math.min(2, jMagA / MAX_GUN_LINEAR_SPEED * 3) || 1)
+      applyImpactToRecoil(stateA, gunA.model, now, Math.min(2, jMagA / MAX_GUN_LINEAR_SPEED * 4) || 1)
     }
     if (gunB) {
-      const list = this.pendingImpulses.get(gunB.id) ?? []
-      list.push(impulseVecB)
-      this.pendingImpulses.set(gunB.id, list)
       const stateB = gunB.id === 'A' ? this.recoilState : this.aiRecoilState
-      applyImpactToRecoil(stateB, gunB.model, now, Math.min(2, jMagB / MAX_GUN_LINEAR_SPEED * 3) || 1)
+      applyImpactToRecoil(stateB, gunB.model, now, Math.min(2, jMagB / MAX_GUN_LINEAR_SPEED * 4) || 1)
     }
 
     const mx = (bodyA.position.x + bodyB.position.x) / 2
     const my = (bodyA.position.y + bodyB.position.y) / 2
     this.spawnHitSparks(mx, my)
-    this.shakeIntensity = Math.min(this.shakeIntensity + 5, 18)
+    this.shakeIntensity = Math.min(this.shakeIntensity + 6, 20)
   }
 
   private endBattle(): void {
