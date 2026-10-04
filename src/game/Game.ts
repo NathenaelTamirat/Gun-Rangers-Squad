@@ -609,83 +609,55 @@ export class Game {
       Matter.Body.setAngularVelocity(gun.body, Math.sign(gun.body.angularVelocity) * MAX_GUN_ANGULAR_SPEED)
     }
 
+    // Last-resort anti-tunneling: if the gun center has passed through a wall
+    // boundary (can happen at high speed), push it back. Matter.js owns the
+    // bounce response — we do NOT flip velocity here to avoid double-resolving.
+    // Angular response on a genuine tunnel-correction: derive spin from the
+    // tangential velocity component (the part sliding along the wall surface)
+    // divided by half the gun length, giving a physically meaningful angular
+    // impulse rather than random noise.
     const margin = Math.max(gun.model.length, GUN_HEIGHT) / 2 + 3
     const minX = WALL_THICKNESS + margin
     const maxX = WALL_THICKNESS + this.arena.width - margin
     const minY = WALL_THICKNESS + margin
     const maxY = WALL_THICKNESS + this.arena.height - margin
     const { x, y } = gun.body.position
-    const restitution = gun.model.restitution
+    const vx = gun.body.velocity.x
+    const vy = gun.body.velocity.y
+    const halfLen = gun.model.length / 2
 
-    // Rule 3 (corner case): a gun can hit two walls in the same tick (e.g. a
-    // corner). Instead of applying two independent flat recoil shocks, we
-    // collect each wall's actual Δv as an impulse vector and vector-sum them
-    // — same treatment as gun-gun collisions — so a corner hit is physically
-    // consistent (perpendicular walls partially reinforce, not double-stack).
-    const wallImpulses: { x: number; y: number }[] = []
-
-    // Left wall
-    if (x < minX) {
+    // Left wall (normal points +X)
+    if (x < minX && vx < 0) {
       Matter.Body.setPosition(gun.body, { x: minX, y: gun.body.position.y })
-      if (gun.body.velocity.x < 0) {
-        const preVx = gun.body.velocity.x, preVy = gun.body.velocity.y
-        const vx = gun.body.velocity.x * -(1 + restitution)
-        const vy = gun.body.velocity.y * 0.85
-        Matter.Body.setVelocity(gun.body, { x: vx, y: vy })
-        Matter.Body.setAngularVelocity(gun.body, gun.body.angularVelocity * -0.3 + (Math.random() - 0.5) * 0.08)
-        wallImpulses.push({ x: vx - preVx, y: vy - preVy })
-      }
+      // Tangential velocity along wall (Y component) creates spin
+      const tangential = vy
+      const spinFromTangent = (tangential / halfLen) * 0.25
+      Matter.Body.setVelocity(gun.body, { x: Math.abs(vx) * gun.model.restitution, y: vy * 0.9 })
+      Matter.Body.setAngularVelocity(gun.body, gun.body.angularVelocity * 0.5 + spinFromTangent)
     }
-    // Right wall
-    if (x > maxX) {
+    // Right wall (normal points -X)
+    if (x > maxX && vx > 0) {
       Matter.Body.setPosition(gun.body, { x: maxX, y: gun.body.position.y })
-      if (gun.body.velocity.x > 0) {
-        const preVx = gun.body.velocity.x, preVy = gun.body.velocity.y
-        const vx = gun.body.velocity.x * -(1 + restitution)
-        const vy = gun.body.velocity.y * 0.85
-        Matter.Body.setVelocity(gun.body, { x: vx, y: vy })
-        Matter.Body.setAngularVelocity(gun.body, gun.body.angularVelocity * -0.3 + (Math.random() - 0.5) * 0.08)
-        wallImpulses.push({ x: vx - preVx, y: vy - preVy })
-      }
+      const tangential = vy
+      const spinFromTangent = -(tangential / halfLen) * 0.25
+      Matter.Body.setVelocity(gun.body, { x: -Math.abs(vx) * gun.model.restitution, y: vy * 0.9 })
+      Matter.Body.setAngularVelocity(gun.body, gun.body.angularVelocity * 0.5 + spinFromTangent)
     }
-    // Top wall
-    if (y < minY) {
+    // Top wall (normal points +Y)
+    if (y < minY && vy < 0) {
       Matter.Body.setPosition(gun.body, { x: gun.body.position.x, y: minY })
-      if (gun.body.velocity.y < 0) {
-        const preVx = gun.body.velocity.x, preVy = gun.body.velocity.y
-        const vx = gun.body.velocity.x * 0.85
-        const vy = gun.body.velocity.y * -(1 + restitution)
-        Matter.Body.setVelocity(gun.body, { x: vx, y: vy })
-        Matter.Body.setAngularVelocity(gun.body, gun.body.angularVelocity * -0.3 + (Math.random() - 0.5) * 0.08)
-        wallImpulses.push({ x: vx - preVx, y: vy - preVy })
-      }
+      const tangential = vx
+      const spinFromTangent = -(tangential / halfLen) * 0.25
+      Matter.Body.setVelocity(gun.body, { x: vx * 0.9, y: Math.abs(vy) * gun.model.restitution })
+      Matter.Body.setAngularVelocity(gun.body, gun.body.angularVelocity * 0.5 + spinFromTangent)
     }
-    // Bottom wall
-    if (y > maxY) {
+    // Bottom wall (normal points -Y)
+    if (y > maxY && vy > 0) {
       Matter.Body.setPosition(gun.body, { x: gun.body.position.x, y: maxY })
-      if (gun.body.velocity.y > 0) {
-        const preVx = gun.body.velocity.x, preVy = gun.body.velocity.y
-        const vx = gun.body.velocity.x * 0.85
-        const vy = gun.body.velocity.y * -(1 + restitution)
-        Matter.Body.setVelocity(gun.body, { x: vx, y: vy })
-        Matter.Body.setAngularVelocity(gun.body, gun.body.angularVelocity * -0.3 + (Math.random() - 0.5) * 0.08)
-        wallImpulses.push({ x: vx - preVx, y: vy - preVy })
-      }
-    }
-
-    // Apply impact recoil shock if we hit a wall — magnitude now comes from
-    // the REAL velocity change (impact-speed factor), vector-summed across
-    // any simultaneous wall hits (Rule 3), then damped by the Fibonacci
-    // stack (Rule 2) inside applyImpactToRecoil itself.
-    if (wallImpulses.length > 0) {
-      const now = performance.now()
-      const state = gun.id === 'A' ? this.recoilState : this.aiRecoilState
-      const maxSingle = Math.max(...wallImpulses.map(v => Math.hypot(v.x, v.y)))
-      const combinedRatio = combineSimultaneousImpulses(wallImpulses)
-      // Normalize against the gun's own max linear speed so impact magnitude
-      // is a comparable ~0..2 scalar across gun models of different mass/speed.
-      const normalizedImpact = Math.min(2, (maxSingle * combinedRatio) / MAX_GUN_LINEAR_SPEED * 3)
-      applyImpactToRecoil(state, gun.model, now, normalizedImpact || 1)
+      const tangential = vx
+      const spinFromTangent = (tangential / halfLen) * 0.25
+      Matter.Body.setVelocity(gun.body, { x: vx * 0.9, y: -Math.abs(vy) * gun.model.restitution })
+      Matter.Body.setAngularVelocity(gun.body, gun.body.angularVelocity * 0.5 + spinFromTangent)
     }
   }
 
@@ -770,12 +742,19 @@ export class Game {
       })
     }
 
-    // Angular jolt — now proportional to impulse magnitude (impact-speed
-    // factor) instead of a flat random range, so harder hits spin more.
-    const jMagA = Math.hypot(impulseVecA.x, impulseVecA.y)
-    const jMagB = Math.hypot(impulseVecB.x, impulseVecB.y)
-    const spinA = (Math.random() - 0.5) * 0.12 * (1 + jMagA * 0.3)
-    const spinB = (Math.random() - 0.5) * 0.12 * (1 + jMagB * 0.3)
+    // Angular jolt from tangential relative velocity at contact point.
+    // The tangential component (perpendicular to collision normal) creates
+    // spin proportional to how much the guns are sliding past each other.
+    // Dividing by halfLen gives angular velocity units (rad/frame).
+    const relVtx = relVx - relVn * nx
+    const relVty = relVy - relVn * ny
+    const relVtMag = Math.hypot(relVtx, relVty)
+    const halfLenA = (gunA?.model.length ?? 50) / 2
+    const halfLenB = (gunB?.model.length ?? 50) / 2
+    // Sign: tangential velocity cross normal gives spin direction
+    const tangentSign = relVtx * ny - relVty * nx
+    const spinA = (tangentSign > 0 ? 1 : -1) * Math.min(relVtMag / halfLenA * 0.18, 0.35)
+    const spinB = (tangentSign > 0 ? -1 : 1) * Math.min(relVtMag / halfLenB * 0.18, 0.35)
     Matter.Body.setAngularVelocity(bodyA, bodyA.angularVelocity + spinA)
     Matter.Body.setAngularVelocity(bodyB, bodyB.angularVelocity + spinB)
 
@@ -783,6 +762,8 @@ export class Game {
     // apply recoil shock: vector-summed against any other hit this gun took
     // this tick, damped by the Fibonacci stack (Rule 2), scaled by real
     // impulse magnitude (impact-speed + mass factors already baked in).
+    const jMagA = Math.hypot(impulseVecA.x, impulseVecA.y)
+    const jMagB = Math.hypot(impulseVecB.x, impulseVecB.y)
     const now = performance.now()
     if (gunA) {
       const key = `${gunA.id}`

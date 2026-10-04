@@ -16,10 +16,13 @@ export function createGunBody(x: number, y: number, angle: number, gunData: GunD
     frictionAir: gunData.model.frictionAir,
     angle,
     label: `gun-${gunData.id}`,
+    // Negative group: guns never collide with each other via Matter.js solver.
+    // Gun-gun collision response is handled entirely in handleGunGunCollision
+    // so Matter.js doesn't double-resolve it.
     collisionFilter: {
-      group: 0,
+      group: -1,
       category: 0x0002,
-      mask: 0x0001 | 0x0002 | 0x0004,
+      mask: 0x0001 | 0x0004,
     },
   }
 

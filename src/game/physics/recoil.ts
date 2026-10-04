@@ -5,6 +5,7 @@ import {
   MAX_RECOIL_ANGULAR_KICK,
   RECOIL_STABLE_EPSILON,
   RECOIL_FIB_CAP_INDEX,
+  GUN_HEIGHT,
 } from '../constants'
 
 export function gaussianRandom(mean: number, stdDev: number): number {
@@ -141,10 +142,28 @@ export function applyRecoilPhysics(
     Matter.Body.setVelocity(gunBody, { x: newVx, y: newVy })
   }
 
-  // Random direction each shot — gives the rotation a lively, unpredictable feel
-  const spinDir = Math.random() < 0.5 ? 1 : -1
-  const spinMag = gaussianRandom(0.7, 0.2)
-  const rawSpin = model.recoilAngularKick * recoilMul * damping * spinDir * Math.max(0.3, spinMag)
+  // Torque direction from geometry: barrel tip is offset from CoM along the
+  // gun's local X axis. Recoil force is anti-parallel to the barrel (−cos,−sin).
+  // Cross product (2D scalar) of offset × force gives the torque sign.
+  // offset = (halfLen, 0) in local space → world: (cos*halfLen, sin*halfLen)
+  // force direction = (−cos(angle), −sin(angle))
+  // cross = offset.x * force.y − offset.y * force.x
+  //       = cos*halfLen*(−sin) − sin*halfLen*(−cos) = 0  (collinear → no torque)
+  // The barrel is not at the CoM height — it sits at y ≈ −GUN_HEIGHT*0.1 in
+  // local space (slightly above center). That vertical offset is what creates
+  // the real torque. We approximate it as a fixed fraction of gun height.
+  const halfLen = model.length / 2
+  const barrelOffsetY = -GUN_HEIGHT * 0.15   // barrel above CoM in local space
+  // Recoil impulse direction in world space (opposite to barrel)
+  const rfx = -Math.cos(angle)
+  const rfy = -Math.sin(angle)
+  // Barrel tip offset in world space
+  const box = Math.cos(angle) * halfLen - Math.sin(angle) * barrelOffsetY
+  const boy = Math.sin(angle) * halfLen + Math.cos(angle) * barrelOffsetY
+  // 2D cross product gives torque sign
+  const torqueSign = box * rfy - boy * rfx > 0 ? 1 : -1
+  const spinMag = gaussianRandom(0.85, 0.15)
+  const rawSpin = model.recoilAngularKick * recoilMul * damping * torqueSign * Math.max(0.3, spinMag)
   const clampedSpin = Math.min(Math.abs(rawSpin), MAX_RECOIL_ANGULAR_KICK) * Math.sign(rawSpin)
   Matter.Body.setAngularVelocity(gunBody, gunBody.angularVelocity + clampedSpin)
 }
@@ -174,12 +193,15 @@ export function applyRecoilPlayer(
 }
 
 export function decayPlayerRecoil(state: RecoilState, delta: number): void {
+  // Delta-normalized decay — matches decayAIRecoil pattern so both are
+  // frame-rate independent. Factor 0.90 is per 16.67ms (60fps reference).
+  const t = delta / 16.67
   if (state.kick > 0) {
-    state.kick -= state.recoveryVelocity
+    state.kick -= state.recoveryVelocity * t
     if (state.kick < 0) state.kick = 0
-    state.recoveryVelocity *= 0.90
+    state.recoveryVelocity *= Math.pow(0.90, t)
   }
-  state.rotation *= 0.90
+  state.rotation *= Math.pow(0.90, t)
 }
 
 export function decayAIRecoil(state: { kick: number; rotation: number }, delta: number): void {
