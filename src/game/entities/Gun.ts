@@ -11,18 +11,19 @@ export function createGunBody(x: number, y: number, angle: number, gunData: GunD
 
   const opts: Matter.IBodyDefinition = {
     mass,
-    restitution: gunData.model.restitution,
+    // restitution: 0 so Matter.js resolves gun-wall bounces with zero
+    // energy (we add the correct bounce manually in keepGunInsideArena),
+    // and gun-gun pairs get zero bounce from Matter.js so our manual
+    // handleGunGunCollision is the sole resolver without double-stacking.
+    restitution: 0,
     friction: GUN_FRICTION,
     frictionAir: gunData.model.frictionAir,
     angle,
     label: `gun-${gunData.id}`,
-    // Negative group: guns never collide with each other via Matter.js solver.
-    // Gun-gun collision response is handled entirely in handleGunGunCollision
-    // so Matter.js doesn't double-resolve it.
     collisionFilter: {
-      group: -1,
+      group: 0,
       category: 0x0002,
-      mask: 0x0001 | 0x0004,
+      mask: 0x0001 | 0x0002 | 0x0004,
     },
   }
 

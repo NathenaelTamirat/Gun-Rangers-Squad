@@ -116,23 +116,17 @@ export function applyRecoilPhysics(
   const n = advanceStack(recoilState, now)
   const damping = fibDampingFactor(n)
 
-  // stability reduces kick (0.3 floor so even high-stability guns feel it)
-  const stabilityMul = Math.max(0.3, 1 - model.stability * 0.6)
+  // Real gun recoil: bullet leaves barrel, equal & opposite impulse kicks
+  // the gun straight back along the barrel axis. Heavier gun = less kick.
+  // recoilForce is calibrated per-model (sniper >> pistol). We scale by
+  // 8000 (up from 1000) so the kick is actually visible — a gun sitting
+  // still should lurch backward several pixels per shot.
+  const stabilityMul = Math.max(0.4, 1 - model.stability * 0.5)
+  const impulseMagnitude = model.recoilForce * recoilMul * stabilityMul * 8000
+  const deltaV = (impulseMagnitude / model.mass) * damping
 
-  // Momentum-conservation impulse: J = m_bullet_equivalent * v, expressed via
-  // recoilForce (calibrated per-model) then normalized by the gun's own mass
-  // so heavier guns visibly resist recoil more (real physics: Δv = J/m).
-  const impulseMagnitude = model.recoilForce * recoilMul * stabilityMul * 1000
-  const rawDeltaV = impulseMagnitude / model.mass
-
-  // Fibonacci stacking damper only bites when events are landing back-to-back
-  // before the gun settles — a clean, fully-recovered shot always gets n=1
-  // (damping = 1), i.e., full strength, satisfying "if the user shoots,
-  // intensity should be high."
-  const clampedImpulse = rawDeltaV * damping
-
-  const newVx = gunBody.velocity.x + (-Math.cos(angle) * clampedImpulse)
-  const newVy = gunBody.velocity.y + (-Math.sin(angle) * clampedImpulse)
+  const newVx = gunBody.velocity.x + (-Math.cos(angle) * deltaV)
+  const newVy = gunBody.velocity.y + (-Math.sin(angle) * deltaV)
 
   const resultSpeed = Math.hypot(newVx, newVy)
   if (resultSpeed > MAX_GUN_TOTAL_SPEED) {
@@ -142,28 +136,18 @@ export function applyRecoilPhysics(
     Matter.Body.setVelocity(gunBody, { x: newVx, y: newVy })
   }
 
-  // Torque direction from geometry: barrel tip is offset from CoM along the
-  // gun's local X axis. Recoil force is anti-parallel to the barrel (−cos,−sin).
-  // Cross product (2D scalar) of offset × force gives the torque sign.
-  // offset = (halfLen, 0) in local space → world: (cos*halfLen, sin*halfLen)
-  // force direction = (−cos(angle), −sin(angle))
-  // cross = offset.x * force.y − offset.y * force.x
-  //       = cos*halfLen*(−sin) − sin*halfLen*(−cos) = 0  (collinear → no torque)
-  // The barrel is not at the CoM height — it sits at y ≈ −GUN_HEIGHT*0.1 in
-  // local space (slightly above center). That vertical offset is what creates
-  // the real torque. We approximate it as a fixed fraction of gun height.
+  // Angular kick: barrel sits above CoM, so recoil force creates a torque.
+  // The cross product of barrel-offset × recoil-force gives the sign.
+  // barrelOffsetY is negative (barrel above center in local space).
   const halfLen = model.length / 2
-  const barrelOffsetY = -GUN_HEIGHT * 0.15   // barrel above CoM in local space
-  // Recoil impulse direction in world space (opposite to barrel)
+  const barrelOffsetY = -GUN_HEIGHT * 0.15
   const rfx = -Math.cos(angle)
   const rfy = -Math.sin(angle)
-  // Barrel tip offset in world space
   const box = Math.cos(angle) * halfLen - Math.sin(angle) * barrelOffsetY
   const boy = Math.sin(angle) * halfLen + Math.cos(angle) * barrelOffsetY
-  // 2D cross product gives torque sign
   const torqueSign = box * rfy - boy * rfx > 0 ? 1 : -1
   const spinMag = gaussianRandom(0.85, 0.15)
-  const rawSpin = model.recoilAngularKick * recoilMul * damping * torqueSign * Math.max(0.3, spinMag)
+  const rawSpin = model.recoilAngularKick * recoilMul * damping * torqueSign * Math.max(0.4, spinMag)
   const clampedSpin = Math.min(Math.abs(rawSpin), MAX_RECOIL_ANGULAR_KICK) * Math.sign(rawSpin)
   Matter.Body.setAngularVelocity(gunBody, gunBody.angularVelocity + clampedSpin)
 }

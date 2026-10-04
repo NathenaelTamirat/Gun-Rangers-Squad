@@ -28,7 +28,6 @@ import {
   applyRecoilPhysics, applyRecoilPlayer, decayPlayerRecoil,
   decayAIRecoil, getDynamicSpread,
   gaussianRandom, isStableEnough, applyImpactToRecoil,
-  combineSimultaneousImpulses,
 } from './physics/recoil'
 import {
   isBulletCollision, isGunCollision, getBodyOwnerId,
@@ -595,7 +594,6 @@ export class Game {
   }
 
   private keepGunInsideArena(gun: GunData): void {
-    // Cap speed to prevent physics instability
     const speed = Math.hypot(gun.body.velocity.x, gun.body.velocity.y)
     if (speed > MAX_GUN_LINEAR_SPEED) {
       const scale = MAX_GUN_LINEAR_SPEED / speed
@@ -604,60 +602,70 @@ export class Game {
         y: gun.body.velocity.y * scale,
       })
     }
-
     if (Math.abs(gun.body.angularVelocity) > MAX_GUN_ANGULAR_SPEED) {
       Matter.Body.setAngularVelocity(gun.body, Math.sign(gun.body.angularVelocity) * MAX_GUN_ANGULAR_SPEED)
     }
 
-    // Last-resort anti-tunneling: if the gun center has passed through a wall
-    // boundary (can happen at high speed), push it back. Matter.js owns the
-    // bounce response — we do NOT flip velocity here to avoid double-resolving.
-    // Angular response on a genuine tunnel-correction: derive spin from the
-    // tangential velocity component (the part sliding along the wall surface)
-    // divided by half the gun length, giving a physically meaningful angular
-    // impulse rather than random noise.
-    const margin = Math.max(gun.model.length, GUN_HEIGHT) / 2 + 3
+    // We set gun restitution=0 so Matter.js applies zero bounce on wall hits.
+    // This function is the sole wall bounce resolver — runs every frame,
+    // applies correct v_new = -e * v_old, derives angular spin from the
+    // tangential velocity component (sliding along the wall surface).
+    const margin = Math.max(gun.model.length, GUN_HEIGHT) / 2 + 2
     const minX = WALL_THICKNESS + margin
     const maxX = WALL_THICKNESS + this.arena.width - margin
     const minY = WALL_THICKNESS + margin
     const maxY = WALL_THICKNESS + this.arena.height - margin
-    const { x, y } = gun.body.position
-    const vx = gun.body.velocity.x
-    const vy = gun.body.velocity.y
+    const pos = gun.body.position
+    const e = gun.model.restitution   // e.g. 0.82 for pistol
     const halfLen = gun.model.length / 2
 
-    // Left wall (normal points +X)
-    if (x < minX && vx < 0) {
-      Matter.Body.setPosition(gun.body, { x: minX, y: gun.body.position.y })
-      // Tangential velocity along wall (Y component) creates spin
-      const tangential = vy
-      const spinFromTangent = (tangential / halfLen) * 0.25
-      Matter.Body.setVelocity(gun.body, { x: Math.abs(vx) * gun.model.restitution, y: vy * 0.9 })
-      Matter.Body.setAngularVelocity(gun.body, gun.body.angularVelocity * 0.5 + spinFromTangent)
+    // Left wall — normal +X, tangent is Y
+    if (pos.x < minX) {
+      Matter.Body.setPosition(gun.body, { x: minX, y: pos.y })
+      if (gun.body.velocity.x < 0) {
+        const vt = gun.body.velocity.y
+        Matter.Body.setVelocity(gun.body, {
+          x: -gun.body.velocity.x * e,
+          y: vt * 0.85,
+        })
+        Matter.Body.setAngularVelocity(gun.body, gun.body.angularVelocity * 0.6 + (vt / halfLen) * 0.3)
+      }
     }
-    // Right wall (normal points -X)
-    if (x > maxX && vx > 0) {
-      Matter.Body.setPosition(gun.body, { x: maxX, y: gun.body.position.y })
-      const tangential = vy
-      const spinFromTangent = -(tangential / halfLen) * 0.25
-      Matter.Body.setVelocity(gun.body, { x: -Math.abs(vx) * gun.model.restitution, y: vy * 0.9 })
-      Matter.Body.setAngularVelocity(gun.body, gun.body.angularVelocity * 0.5 + spinFromTangent)
+    // Right wall — normal -X, tangent is Y
+    if (pos.x > maxX) {
+      Matter.Body.setPosition(gun.body, { x: maxX, y: pos.y })
+      if (gun.body.velocity.x > 0) {
+        const vt = gun.body.velocity.y
+        Matter.Body.setVelocity(gun.body, {
+          x: -gun.body.velocity.x * e,
+          y: vt * 0.85,
+        })
+        Matter.Body.setAngularVelocity(gun.body, gun.body.angularVelocity * 0.6 - (vt / halfLen) * 0.3)
+      }
     }
-    // Top wall (normal points +Y)
-    if (y < minY && vy < 0) {
-      Matter.Body.setPosition(gun.body, { x: gun.body.position.x, y: minY })
-      const tangential = vx
-      const spinFromTangent = -(tangential / halfLen) * 0.25
-      Matter.Body.setVelocity(gun.body, { x: vx * 0.9, y: Math.abs(vy) * gun.model.restitution })
-      Matter.Body.setAngularVelocity(gun.body, gun.body.angularVelocity * 0.5 + spinFromTangent)
+    // Top wall — normal +Y, tangent is X
+    if (pos.y < minY) {
+      Matter.Body.setPosition(gun.body, { x: pos.x, y: minY })
+      if (gun.body.velocity.y < 0) {
+        const vt = gun.body.velocity.x
+        Matter.Body.setVelocity(gun.body, {
+          x: vt * 0.85,
+          y: -gun.body.velocity.y * e,
+        })
+        Matter.Body.setAngularVelocity(gun.body, gun.body.angularVelocity * 0.6 - (vt / halfLen) * 0.3)
+      }
     }
-    // Bottom wall (normal points -Y)
-    if (y > maxY && vy > 0) {
-      Matter.Body.setPosition(gun.body, { x: gun.body.position.x, y: maxY })
-      const tangential = vx
-      const spinFromTangent = (tangential / halfLen) * 0.25
-      Matter.Body.setVelocity(gun.body, { x: vx * 0.9, y: -Math.abs(vy) * gun.model.restitution })
-      Matter.Body.setAngularVelocity(gun.body, gun.body.angularVelocity * 0.5 + spinFromTangent)
+    // Bottom wall — normal -Y, tangent is X
+    if (pos.y > maxY) {
+      Matter.Body.setPosition(gun.body, { x: pos.x, y: maxY })
+      if (gun.body.velocity.y > 0) {
+        const vt = gun.body.velocity.x
+        Matter.Body.setVelocity(gun.body, {
+          x: vt * 0.85,
+          y: -gun.body.velocity.y * e,
+        })
+        Matter.Body.setAngularVelocity(gun.body, gun.body.angularVelocity * 0.6 + (vt / halfLen) * 0.3)
+      }
     }
   }
 
@@ -688,9 +696,6 @@ export class Game {
    * other collision the same gun takes this same physics tick (Rule 3).
    */
   private handleGunGunCollision(bodyA: Matter.Body, bodyB: Matter.Body): void {
-    const speed = Math.hypot(bodyA.velocity.x - bodyB.velocity.x, bodyA.velocity.y - bodyB.velocity.y)
-    if (speed < 1) return // ignore micro-collisions
-
     const dx = bodyB.position.x - bodyA.position.x
     const dy = bodyB.position.y - bodyA.position.y
     const dist = Math.hypot(dx, dy)
@@ -704,89 +709,64 @@ export class Game {
     const massA = gunA?.model.mass ?? bodyA.mass
     const massB = gunB?.model.mass ?? bodyB.mass
 
-    // Separation force — push guns apart so they don't overlap
+    // Separate overlapping bodies
     const combinedRadius = ((gunA?.model.length ?? 50) + (gunB?.model.length ?? 50)) / 2
     const overlap = Math.max(0, combinedRadius - dist)
     if (overlap > 0) {
-      const sepForce = overlap * 0.4
-      Matter.Body.applyForce(bodyA, bodyA.position, { x: -nx * sepForce, y: -ny * sepForce })
-      Matter.Body.applyForce(bodyB, bodyB.position, { x: nx * sepForce, y: ny * sepForce })
+      const sep = overlap * 0.5
+      Matter.Body.setPosition(bodyA, { x: bodyA.position.x - nx * sep, y: bodyA.position.y - ny * sep })
+      Matter.Body.setPosition(bodyB, { x: bodyB.position.x + nx * sep, y: bodyB.position.y + ny * sep })
     }
 
-    // Mass-weighted restitution impulse along the collision normal:
-    //   J = -(1 + e) * v_rel_n / (1/mA + 1/mB)
-    // A heavy sniper barely moves when a light pistol bounces off it, and
-    // vice versa — correct for any mass pairing, unlike the old flat split.
+    // Relative velocity along collision normal
     const relVx = bodyA.velocity.x - bodyB.velocity.x
     const relVy = bodyA.velocity.y - bodyB.velocity.y
     const relVn = relVx * nx + relVy * ny
 
-    let impulseVecA = { x: 0, y: 0 }
-    let impulseVecB = { x: 0, y: 0 }
+    // Only resolve if approaching
+    if (relVn <= 0) return
 
-    if (relVn > 0) {
-      const restitution = Math.min(gunA?.model.restitution ?? 0.7, gunB?.model.restitution ?? 0.7)
-      const invMassSum = 1 / massA + 1 / massB
-      const J = (relVn * (1 + restitution)) / invMassSum
+    // Mass-weighted impulse: J = (1+e) * v_rel_n / (1/mA + 1/mB)
+    const restitution = Math.min(gunA?.model.restitution ?? 0.7, gunB?.model.restitution ?? 0.7)
+    const J = (relVn * (1 + restitution)) / (1 / massA + 1 / massB)
 
-      impulseVecA = { x: -nx * J / massA, y: -ny * J / massA }
-      impulseVecB = { x: nx * J / massB, y: ny * J / massB }
+    const impulseVecA = { x: -nx * J / massA, y: -ny * J / massA }
+    const impulseVecB = { x:  nx * J / massB, y:  ny * J / massB }
 
-      Matter.Body.setVelocity(bodyA, {
-        x: bodyA.velocity.x + impulseVecA.x,
-        y: bodyA.velocity.y + impulseVecA.y,
-      })
-      Matter.Body.setVelocity(bodyB, {
-        x: bodyB.velocity.x + impulseVecB.x,
-        y: bodyB.velocity.y + impulseVecB.y,
-      })
-    }
+    Matter.Body.setVelocity(bodyA, { x: bodyA.velocity.x + impulseVecA.x, y: bodyA.velocity.y + impulseVecA.y })
+    Matter.Body.setVelocity(bodyB, { x: bodyB.velocity.x + impulseVecB.x, y: bodyB.velocity.y + impulseVecB.y })
 
-    // Angular jolt from tangential relative velocity at contact point.
-    // The tangential component (perpendicular to collision normal) creates
-    // spin proportional to how much the guns are sliding past each other.
-    // Dividing by halfLen gives angular velocity units (rad/frame).
+    // Angular spin from tangential relative velocity at contact
     const relVtx = relVx - relVn * nx
     const relVty = relVy - relVn * ny
     const relVtMag = Math.hypot(relVtx, relVty)
     const halfLenA = (gunA?.model.length ?? 50) / 2
     const halfLenB = (gunB?.model.length ?? 50) / 2
-    // Sign: tangential velocity cross normal gives spin direction
     const tangentSign = relVtx * ny - relVty * nx
-    const spinA = (tangentSign > 0 ? 1 : -1) * Math.min(relVtMag / halfLenA * 0.18, 0.35)
-    const spinB = (tangentSign > 0 ? -1 : 1) * Math.min(relVtMag / halfLenB * 0.18, 0.35)
+    const spinA = (tangentSign > 0 ? 1 : -1) * Math.min(relVtMag / halfLenA * 0.2, 0.4)
+    const spinB = (tangentSign > 0 ? -1 : 1) * Math.min(relVtMag / halfLenB * 0.2, 0.4)
     Matter.Body.setAngularVelocity(bodyA, bodyA.angularVelocity + spinA)
     Matter.Body.setAngularVelocity(bodyB, bodyB.angularVelocity + spinB)
 
-    // Track this impulse for same-tick multi-touch combining (Rule 3), then
-    // apply recoil shock: vector-summed against any other hit this gun took
-    // this tick, damped by the Fibonacci stack (Rule 2), scaled by real
-    // impulse magnitude (impact-speed + mass factors already baked in).
+    // Recoil state tracking
     const jMagA = Math.hypot(impulseVecA.x, impulseVecA.y)
     const jMagB = Math.hypot(impulseVecB.x, impulseVecB.y)
     const now = performance.now()
     if (gunA) {
-      const key = `${gunA.id}`
-      const list = this.pendingImpulses.get(key) ?? []
+      const list = this.pendingImpulses.get(gunA.id) ?? []
       list.push(impulseVecA)
-      this.pendingImpulses.set(key, list)
+      this.pendingImpulses.set(gunA.id, list)
       const stateA = gunA.id === 'A' ? this.recoilState : this.aiRecoilState
-      const combinedRatio = combineSimultaneousImpulses(list)
-      const normalizedImpact = Math.min(2, (jMagA * combinedRatio) / MAX_GUN_LINEAR_SPEED * 3) || jMagA / MAX_GUN_LINEAR_SPEED
-      applyImpactToRecoil(stateA, gunA.model, now, normalizedImpact || 1)
+      applyImpactToRecoil(stateA, gunA.model, now, Math.min(2, jMagA / MAX_GUN_LINEAR_SPEED * 3) || 1)
     }
     if (gunB) {
-      const key = `${gunB.id}`
-      const list = this.pendingImpulses.get(key) ?? []
+      const list = this.pendingImpulses.get(gunB.id) ?? []
       list.push(impulseVecB)
-      this.pendingImpulses.set(key, list)
+      this.pendingImpulses.set(gunB.id, list)
       const stateB = gunB.id === 'A' ? this.recoilState : this.aiRecoilState
-      const combinedRatio = combineSimultaneousImpulses(list)
-      const normalizedImpact = Math.min(2, (jMagB * combinedRatio) / MAX_GUN_LINEAR_SPEED * 3) || jMagB / MAX_GUN_LINEAR_SPEED
-      applyImpactToRecoil(stateB, gunB.model, now, normalizedImpact || 1)
+      applyImpactToRecoil(stateB, gunB.model, now, Math.min(2, jMagB / MAX_GUN_LINEAR_SPEED * 3) || 1)
     }
 
-    // Visual effects
     const mx = (bodyA.position.x + bodyB.position.x) / 2
     const my = (bodyA.position.y + bodyB.position.y) / 2
     this.spawnHitSparks(mx, my)
